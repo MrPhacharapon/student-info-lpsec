@@ -1,0 +1,6 @@
+**/*.md
+**/*.json
+!appsscript.json
+.git
+node_modules
+serve.js
