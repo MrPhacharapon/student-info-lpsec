@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <!-- Native DOM Error Catcher -->
+  <script>
+    window.onerror = function(msg, url, line, col, error) {
+      var errDiv = document.createElement('div');
+      errDiv.style.position = 'fixed'; errDiv.style.top = '0'; errDiv.style.left = '0';
+      errDiv.style.width = '100%'; errDiv.style.background = '#dc2626'; errDiv.style.color = 'white';
+      errDiv.style.padding = '20px'; errDiv.style.zIndex = '999999'; errDiv.style.wordBreak = 'break-all';
+      errDiv.innerHTML = '<b>🚨 [System Crash]</b><br/>' + msg + '<br/><small>Line: ' + line + ', Col: ' + col + '</small>';
+      document.body.appendChild(errDiv);
+    };
+    window.onunhandledrejection = function(e) {
+      var errDiv = document.createElement('div');
+      errDiv.style.position = 'fixed'; errDiv.style.bottom = '0'; errDiv.style.left = '0';
+      errDiv.style.width = '100%'; errDiv.style.background = '#d97706'; errDiv.style.color = 'white';
+      errDiv.style.padding = '20px'; errDiv.style.zIndex = '999999'; errDiv.style.wordBreak = 'break-all';
+      errDiv.innerHTML = '<b>⚠️ [Network/Promise Error]</b><br/>' + (e.reason ? (e.reason.message || e.reason) : 'Unknown reason');
+      document.body.appendChild(errDiv);
+    };
+  </script>
+
+  <meta charset="UTF-8">
+  <title>ระบบสารสนเทศนักเรียน ศูนย์การศึกษาพิเศษ ประจำจังหวัดลำปาง</title>
+  
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            mint: {
+              50: '#E8F5E9',
+              100: '#C8E6C9',
+              200: '#A5D6A7',
+              700: '#388E3C',
+              800: '#2E7D32',
+              900: '#1B5E20'
+            },
+            cyan: {
+              50: '#E0F7FA',
+              100: '#B2EBF2',
+              200: '#80DEEA',
+              700: '#0097A7',
+              800: '#00838F',
+              900: '#006064'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- jQuery & Select2 CSS/JS -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Chart.js Datalabels Plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+
+  <!-- SweetAlert2 -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Injection of Custom CSS -->
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+</head>
+<body class="p-3 md:p-6">
+
+  <!-- Micro-loading Spinner Overlay -->
+  <div id="loadingOverlay">
+    <div class="flex flex-col items-center gap-4">
+      <div class="spinner-macos"></div>
+      <p class="text-emerald-900 font-medium text-sm animate-pulse">กำลังประมวลผลข้อมูลฐานข้อมูล...</p>
+    </div>
+  </div>
+
+  <!-- Main Grid Layout -->
+  <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6">
+
+    <!-- SIDEBAR: Navigation & Filter Controls -->
+    <div class="lg:col-span-1 flex flex-col gap-6">
+      
+      <!-- App Header and Logo Panel -->
+      <div class="glass-panel p-5 flex items-center gap-4">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-mint-800 to-cyan-700 flex items-center justify-center text-white shadow-md">
+          <i data-lucide="graduation-cap" class="w-7 h-7"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-base leading-tight text-emerald-900">สารสนเทศนักเรียน</h1>
+          <p class="text-xs text-cyan-800 font-medium">ศูนย์การศึกษาพิเศษ ประจำจังหวัดลำปาง</p>
+        </div>
+      </div>
+
+      <!-- App Menu Navigation -->
+      <div class="glass-panel p-4 flex flex-col gap-2">
+        <p class="text-xs font-semibold text-emerald-800/60 uppercase tracking-wider px-3 mb-1">เมนูหลัก</p>
+        
+        <a href="#" data-section="dashboard" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-emerald-800 transition bg-emerald-500/20 text-emerald-800 border-l-4 border-emerald-700 font-semibold">
+          <i data-lucide="layout-dashboard" class="w-4.5 h-4.5"></i>
+          <span>แผงควบคุมสถิติ</span>
+        </a>
+
+        <a href="#" data-section="students" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800">
+          <i data-lucide="users" class="w-4.5 h-4.5"></i>
+          <span>แฟ้มรายชื่อนักเรียน</span>
+        </a>
+
+        <a href="#" data-section="pivot" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800">
+          <i data-lucide="table-2" class="w-4.5 h-4.5"></i>
+          <span>ตารางความสัมพันธ์ของข้อมูล</span>
+        </a>
+      </div>
+
+      <!-- FILTER CONTROLS: Multi-Level Filters -->
+      <div class="glass-panel p-5 flex flex-col gap-5">
+        <div class="flex items-center justify-between border-b border-emerald-100/50 pb-2">
+          <div class="flex items-center gap-2 text-emerald-900 font-bold text-sm">
+            <i data-lucide="filter" class="w-4 h-4 text-emerald-800"></i>
+            <span>ตัวกรองหลายชั้น</span>
+          </div>
+          <button id="btnResetFilters" class="text-xs text-red-600 hover:text-red-700 font-semibold flex items-center gap-1 transition">
+            <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+            ล้างตัวกรอง
+          </button>
+        </div>
+
+        <!-- Filter 1: Name Search -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold text-emerald-950">ค้นหาตามชื่อ-สกุล</label>
+          <div class="relative flex items-center">
+            <i data-lucide="search" class="w-4 h-4 text-gray-400 absolute left-3"></i>
+            <input type="text" id="searchName" placeholder="พิมพ์ชื่อนักเรียน..." class="glass-input pl-9 w-full text-sm">
+          </div>
+        </div>
+
+        <!-- Filter 2: Classroom dropdown -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold text-emerald-950">ห้องเรียน/หน่วยบริการ</label>
+          <select id="filterClassroom" class="select2-enable text-sm">
+            <option value="">ทั้งหมด</option>
+          </select>
+        </div>
+
+        <!-- Filter 3: Teacher dropdown -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold text-emerald-950">ครูผู้รับผิดชอบ</label>
+          <select id="filterTeacher" class="select2-enable text-sm">
+            <option value="">ทั้งหมด</option>
+          </select>
+        </div>
+
+        <!-- Filter: Age Group dropdown -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold text-emerald-950">ช่วงอายุ / อายุรายปี</label>
+          <select id="filterAgeGroup" class="select2-enable text-sm">
+            <option value="">ทั้งหมด</option>
+          </select>
+        </div>
+
+        <!-- Filter 4: Service Type checkboxes -->
+        <div class="flex flex-col gap-2">
+          <span class="text-xs font-semibold text-emerald-950">ประเภทการรับบริการ</span>
+          <div class="flex flex-col gap-2 pl-1">
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterSvcCenter" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>รับบริการที่ศูนย์</span>
+            </label>
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterSvcUnit" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>รับบริการที่หน่วยบริการ</span>
+            </label>
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterSvcHome" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>รับบริการที่บ้าน</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Filter 5: Disability Type -->
+        <div class="flex flex-col gap-1.5 border-t border-emerald-100/30 pt-3">
+          <label class="text-xs font-semibold text-emerald-950">ประเภทความพิการ (บัตรคนพิการ)</label>
+          <select id="filterDisabilityCard" class="select2-enable text-sm">
+            <option value="">ทั้งหมด</option>
+          </select>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold text-emerald-950">ประเภทความพิการ (แบบคัดกรอง)</label>
+          <select id="filterDisabilityScreen" class="select2-enable text-sm">
+            <option value="">ทั้งหมด</option>
+          </select>
+        </div>
+
+        <!-- Filter 6: Document Checklist -->
+        <div class="flex flex-col gap-2 border-t border-emerald-100/30 pt-3">
+          <span class="text-xs font-semibold text-emerald-950">ความสมบูรณ์ของเอกสาร</span>
+          <div class="flex flex-col gap-2 pl-1">
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterDocCard" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>มีบัตรประจำตัวคนพิการ</span>
+            </label>
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterDocCert" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>มีเอกสารรับรองความพิการ</span>
+            </label>
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterDocScreen" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>มีแบบคัดกรองทางการศึกษา</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Filter 7: Nationality and special flags -->
+        <div class="flex flex-col gap-2 border-t border-emerald-100/30 pt-3">
+          <span class="text-xs font-semibold text-emerald-950">เงื่อนไขเพิ่มเติม</span>
+          <div class="flex flex-col gap-2 pl-1">
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterStatusNonThai" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>ไม่ใช่สัญชาติไทย</span>
+            </label>
+            <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" id="filterStatusLater" class="filter-checkbox rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+              <span>พิการภายหลัง</span>
+            </label>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Admin settings quick access below filter box -->
+      <div class="glass-panel p-4">
+        <a href="#" data-section="admin" class="nav-link flex items-center justify-center gap-3 px-4 py-2 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800">
+          <i data-lucide="settings" class="w-4.5 h-4.5"></i>
+          <span>ตั้งค่าระบบ (Admin)</span>
+        </a>
+      </div>
+
+    </div>
+
+    <!-- MAIN PANEL: Dashboard / Students / Pivot -->
+    <div class="lg:col-span-3 flex flex-col gap-6">
+
+      <!-- TOP BAR: Status header and Action Center -->
+      <div class="glass-panel p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h2 id="topBarTitle" class="text-xl font-bold text-emerald-900 leading-tight">แดชบอร์ดสารสนเทศนักเรียนรายบุคคล</h2>
+          <p id="topBarSubtitle" class="text-sm text-cyan-800 font-medium mt-0.5">ภาคเรียนที่ 1 ปีการศึกษา 2569</p>
+          <p id="textReportDate" class="text-xs text-cyan-700/80 font-medium mt-0.5">กำลังโหลดวันที่ข้อมูล...</p>
+        </div>
+      </div>
+
+      <!-- SECTION 1: DASHBOARD VIEW -->
+      <div id="dashboardSection" class="app-section flex flex-col gap-6">
+        
+        <!-- Stats Cards Grid -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <!-- Total -->
+          <div class="glass-panel p-4 flex flex-col gap-1 border-l-4 border-l-emerald-800 cursor-pointer transition-all duration-200 hover:bg-emerald-50/50 hover:scale-[1.02] hover:shadow-md active:scale-95" onclick="showDrillDownDetails('total', '')">
+            <span class="text-xs font-semibold text-gray-500">จำนวนนักเรียนทั้งหมด</span>
+            <div class="flex items-baseline gap-2 mt-1">
+              <span id="statTotal" class="text-3xl font-bold text-emerald-900">0</span>
+              <span class="text-xs text-gray-400">คน</span>
+            </div>
+          </div>
+
+          <!-- Svc 1 -->
+          <div class="glass-panel p-4 flex flex-col gap-1 border-l-4 border-l-emerald-600 cursor-pointer transition-all duration-200 hover:bg-emerald-50/50 hover:scale-[1.02] hover:shadow-md active:scale-95" onclick="showDrillDownDetails('service', 'รับบริการที่ศูนย์')">
+            <span class="text-xs font-semibold text-gray-500">รับบริการที่ศูนย์</span>
+            <div class="flex items-baseline gap-2 mt-1">
+              <span id="statCenter" class="text-3xl font-bold text-emerald-800">0</span>
+              <span class="text-xs text-gray-400">คน</span>
+            </div>
+          </div>
+ 
+          <!-- Svc 2 -->
+          <div class="glass-panel p-4 flex flex-col gap-1 border-l-4 border-l-cyan-700 cursor-pointer transition-all duration-200 hover:bg-cyan-50/50 hover:scale-[1.02] hover:shadow-md active:scale-95" onclick="showDrillDownDetails('service', 'รับบริการที่หน่วยบริการ')">
+            <span class="text-xs font-semibold text-gray-500">รับบริการที่หน่วยบริการ</span>
+            <div class="flex items-baseline gap-2 mt-1">
+              <span id="statSvcUnit" class="text-3xl font-bold text-cyan-800">0</span>
+              <span class="text-xs text-gray-400">คน</span>
+            </div>
+          </div>
+ 
+          <!-- Svc 3 -->
+          <div class="glass-panel p-4 flex flex-col gap-1 border-l-4 border-l-teal-600 cursor-pointer transition-all duration-200 hover:bg-teal-50/50 hover:scale-[1.02] hover:shadow-md active:scale-95" onclick="showDrillDownDetails('service', 'รับบริการที่บ้าน')">
+            <span class="text-xs font-semibold text-gray-500">รับบริการที่บ้าน</span>
+            <div class="flex items-baseline gap-2 mt-1">
+              <span id="statHome" class="text-3xl font-bold text-teal-800">0</span>
+              <span class="text-xs text-gray-400">คน</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- Extra 1: Has Card -->
+          <div class="glass-panel p-4 flex items-center justify-between border-l-4 border-l-green-600 cursor-pointer transition-all duration-200 hover:bg-green-50/50 hover:scale-[1.02] hover:shadow-md active:scale-95" onclick="showDrillDownDetails('hasCard', '')">
+            <div class="flex flex-col">
+              <span class="text-xs font-semibold text-gray-500">มีบัตรประจำตัวคนพิการ</span>
+              <span id="statHasCard" class="text-2xl font-bold text-emerald-950 mt-1">0</span>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-green-100 text-green-700 flex items-center justify-center">
+              <i data-lucide="users" class="w-5 h-5"></i>
+            </div>
+          </div>
+          <!-- Extra 2: Has Certificate -->
+          <div class="glass-panel p-4 flex items-center justify-between border-l-4 border-l-cyan-600 cursor-pointer transition-all duration-200 hover:bg-cyan-50/50 hover:scale-[1.02] hover:shadow-md active:scale-95" onclick="showDrillDownDetails('hasCert', '')">
+            <div class="flex flex-col">
+              <span class="text-xs font-semibold text-gray-500">มีเอกสารรับรองความพิการ</span>
+              <span id="statHasCert" class="text-2xl font-bold text-emerald-950 mt-1">0</span>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-cyan-100 text-cyan-700 flex items-center justify-center">
+              <i data-lucide="file-check-2" class="w-5 h-5"></i>
+            </div>
+          </div>
+          <!-- Extra 3: Has Educational Screening -->
+          <div class="glass-panel p-4 flex items-center justify-between border-l-4 border-l-teal-500 cursor-pointer transition-all duration-200 hover:bg-teal-50/50 hover:scale-[1.02] hover:shadow-md active:scale-95" onclick="showDrillDownDetails('hasScreen', '')">
+            <div class="flex flex-col">
+              <span class="text-xs font-semibold text-gray-500">มีแบบคัดกรองทางการศึกษา</span>
+              <span id="statHasScreen" class="text-2xl font-bold text-emerald-950 mt-1">0</span>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center">
+              <i data-lucide="clipboard-check" class="w-5 h-5"></i>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Age Groups display stats -->
+          <div class="glass-panel p-5 flex flex-col gap-4">
+            <span class="text-sm font-bold text-emerald-955 flex items-center gap-1.5 border-b border-emerald-100/50 pb-2">
+              <i data-lucide="calendar" class="w-4 h-4 text-emerald-800"></i>
+              สถิติตามช่วงอายุ (คน)
+            </span>
+            <div class="flex flex-col gap-3 mt-1">
+              <!-- Item 1 -->
+              <div class="flex items-center justify-between pb-2.5 border-b border-emerald-100/30 text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-green-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุน้อยกว่า 3 ปี')">
+                <span class="px-2.5 py-1 rounded-lg bg-green-100 text-green-700 font-bold text-xs whitespace-nowrap">อายุน้อยกว่า 3 ปี</span>
+                <span class="text-emerald-950"><strong id="statAgeUnder3" class="text-base font-extrabold text-emerald-850">0</strong> คน</span>
+              </div>
+              <!-- Item 2 -->
+              <div class="flex items-center justify-between pb-2.5 border-b border-emerald-100/30 text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-emerald-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุ 3 - 6 ปี')">
+                <span class="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs whitespace-nowrap">อายุ 3 - 6 ปี</span>
+                <span class="text-emerald-950"><strong id="statAge3to6" class="text-base font-extrabold text-emerald-850">0</strong> คน</span>
+              </div>
+              <!-- Item 3 -->
+              <div class="flex items-center justify-between pb-1.5 text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-cyan-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุ 7 ปีขึ้นไป')">
+                <span class="px-2.5 py-1 rounded-lg bg-cyan-100 text-cyan-700 font-bold text-xs whitespace-nowrap">อายุ 7 ปีขึ้นไป</span>
+                <span class="text-emerald-950"><strong id="statAgeOver7" class="text-base font-extrabold text-emerald-850">0</strong> คน</span>
+              </div>
+              <!-- Item 4 (Unknown) -->
+              <div id="containerAgeUnknown" class="flex items-center justify-between pt-2.5 border-t border-dashed border-gray-200 text-sm font-medium hidden cursor-pointer transition-all duration-200 hover:bg-gray-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'ไม่ระบุวันเกิด')">
+                <span class="px-2.5 py-1 rounded-lg bg-gray-100 text-gray-700 font-bold text-xs whitespace-nowrap">ไม่ระบุวันเกิด</span>
+                <span class="text-gray-500"><strong id="statAgeUnknown" class="text-base font-extrabold text-gray-750">0</strong> คน</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chart 1: Service Types -->
+          <div class="glass-panel p-5 flex flex-col gap-4">
+            <h3 class="font-bold text-sm text-emerald-955">สัดส่วนประเภทการรับบริการ</h3>
+            <div class="h-64 relative flex items-center justify-center">
+              <canvas id="chartServiceTypes"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart 2: Age Groups -->
+          <div class="glass-panel p-5 flex flex-col gap-4">
+            <h3 class="font-bold text-sm text-emerald-955">สัดส่วนช่วงอายุของนักเรียน</h3>
+            <div class="h-64 relative flex items-center justify-center">
+              <canvas id="chartAgeGroups"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- Chart 3: Disability by Card -->
+          <div class="glass-panel p-5 flex flex-col gap-4">
+            <h3 class="font-bold text-sm text-emerald-955">ประเภทความพิการ ตามบัตรประจำตัวคนพิการ</h3>
+            <div class="h-64 relative flex items-center justify-center">
+              <canvas id="chartDisabilityCard"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart 4: Disability by Screening -->
+          <div class="glass-panel p-5 flex flex-col gap-4">
+            <h3 class="font-bold text-sm text-emerald-955">ประเภทความพิการ ตามแบบคัดกรองฯ</h3>
+            <div class="h-64 relative flex items-center justify-center">
+              <canvas id="chartDisabilityScreen"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart 5: Specific Age count -->
+          <div class="glass-panel p-5 flex flex-col gap-4 md:col-span-2">
+            <h3 class="font-bold text-sm text-emerald-955">จำนวนนักเรียนแยกตามอายุ (ปี)</h3>
+            <div class="h-64 relative">
+              <canvas id="chartSpecificAges"></canvas>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Service Stats Tables Section (Wider district stats to prevent horizontal scroll) -->
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
+
+          <!-- Districts display stats (Outside Center) -->
+          <div class="glass-panel p-5 flex flex-col gap-4 md:col-span-7">
+            <span class="text-sm font-bold text-emerald-955 flex items-center gap-1.5 border-b border-emerald-100/50 pb-2">
+              <i data-lucide="map-pin" class="w-4 h-4 text-emerald-800"></i>
+              บริการนอกศูนย์ (แยกตามอำเภอ)
+            </span>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse">
+                <tbody id="districtStatsTableBody" class="divide-y divide-emerald-100/10 text-gray-700">
+                  <!-- Dynamic rows -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- In-Center display stats -->
+          <div class="glass-panel p-5 flex flex-col gap-4 md:col-span-5">
+            <span class="text-sm font-bold text-emerald-955 flex items-center gap-1.5 border-b border-emerald-100/50 pb-2">
+              <i data-lucide="home" class="w-4 h-4 text-emerald-800"></i>
+              บริการภายในศูนย์ (แยกตามห้องเรียน)
+            </span>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse">
+                <tbody id="centerStatsTableBody" class="divide-y divide-emerald-100/10 text-gray-700">
+                  <!-- Dynamic rows -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Drill-down Student Details from Chart -->
+        <div id="chartDrillDownContainer" class="glass-panel-drilldown p-5 flex flex-col gap-4 hidden">
+          <div class="flex items-center justify-between border-b border-emerald-100/50 pb-2">
+            <h3 class="font-bold text-sm text-emerald-955 flex items-center gap-2">
+              <i data-lucide="info" class="w-4 h-4 text-emerald-800"></i>
+              <span>รายละเอียดของข้อมูล: <span id="drillDownGroupTitle" class="text-emerald-850 font-extrabold"></span></span>
+            </h3>
+            <button id="btnCloseDrillDown" class="text-xs text-gray-500 hover:text-red-600 font-semibold flex items-center gap-1 transition">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+              ปิดส่วนนี้
+            </button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-emerald-200/50 text-emerald-850 font-semibold">
+                  <th class="px-4 py-2 sticky-col">ชื่อ-สกุล</th>
+                  <th class="px-4 py-2">ประเภทความพิการ</th>
+                  <th class="px-4 py-2">อายุ (ปี)</th>
+                  <th class="px-4 py-2">ห้องเรียน/หน่วยบริการ</th>
+                  <th class="px-4 py-2">ประเภทการบริการ</th>
+                  <th class="px-4 py-2">ครูผู้รับผิดชอบ</th>
+                </tr>
+              </thead>
+              <tbody id="drillDownTableBody" class="divide-y divide-emerald-100/30 text-gray-700">
+                <!-- Rows populated dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SECTION 2: STUDENT DIRECTORY VIEW -->
+      <div id="studentsSection" class="app-section hidden flex flex-col gap-6">
+        
+        <!-- Controls inside list -->
+        <div class="glass-panel p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div class="text-sm text-gray-700">
+            แสดงผลลัพธ์นักเรียน: <strong class="text-emerald-800" id="filteredCountBadge">0</strong> ราย
+          </div>
+          <div class="flex items-center gap-3">
+            <button onclick="exportPivot('pdf')" class="glass-btn-secondary flex items-center gap-1.5 text-xs">
+              <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+              ส่งออก PDF
+            </button>
+            <button onclick="exportPivot('excel')" class="glass-btn-secondary flex items-center gap-1.5 text-xs">
+              <i data-lucide="sheet" class="w-3.5 h-3.5"></i>
+              ส่งออก Excel
+            </button>
+          </div>
+        </div>
+
+        <!-- Legend for Document Symbols -->
+        <div class="flex flex-wrap items-center gap-4 text-xs text-gray-600 bg-white/60 px-5 py-2.5 rounded-xl border border-emerald-100/50 shadow-sm">
+          <span class="font-bold text-emerald-900 flex items-center gap-1">
+            <i data-lucide="info" class="w-3.5 h-3.5 animate-pulse"></i>
+            คำอธิบายสัญลักษณ์เอกสาร:
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-700 font-semibold text-[10px]">บ</span>
+            มีบัตรประจำตัวคนพิการ
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="inline-flex items-center justify-center w-8 h-5 rounded-full bg-emerald-100 text-emerald-700 font-semibold text-[10px] px-1.5">ใบ</span>
+            มีเอกสารรับรองความพิการ
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-cyan-100 text-cyan-700 font-semibold text-[10px]">ค</span>
+            มีแบบคัดกรองทางการศึกษา
+          </span>
+        </div>
+
+        <!-- Student Data Table -->
+        <div class="glass-panel overflow-hidden p-4 flex flex-col gap-1">
+          <!-- Top horizontal scrollbar synchronized with main table container -->
+          <div id="studentTopScrollbarWrapper" class="overflow-x-auto w-full hidden bg-gray-50/10 rounded-full" style="height: 12px; min-height: 12px; margin-bottom: 2px;">
+            <div id="studentTopScrollbarDummy" style="height: 1px;"></div>
+          </div>
+          <div id="studentTableContainer" class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="border-b border-emerald-200/50">
+                  <th class="px-6 py-4 text-emerald-800 text-sm whitespace-nowrap sticky-col">ชื่อ-สกุล</th>
+                  <th class="px-6 py-4 text-emerald-800 text-sm whitespace-nowrap">ห้องเรียน/หน่วยบริการ</th>
+                  <th class="px-6 py-4 text-emerald-800 text-sm whitespace-nowrap">ครูผู้รับผิดชอบ</th>
+                  <th class="px-6 py-4 text-emerald-800 text-sm whitespace-nowrap">ประเภทการบริการ</th>
+                  <th class="px-6 py-4 text-emerald-800 text-sm whitespace-nowrap">ประเภทความพิการ ตามแบบคัดกรองฯ</th>
+                  <th class="px-6 py-4 text-emerald-800 text-sm text-center whitespace-nowrap">เอกสาร</th>
+                  <th class="px-6 py-4 text-emerald-800 text-sm whitespace-nowrap">วันเกิด (พ.ศ.)</th>
+                  <th class="px-6 py-4 text-emerald-900 text-sm text-right whitespace-nowrap">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="studentTableBody" class="divide-y divide-emerald-100/30">
+                <!-- Rows populated by Javascript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SECTION 3: PIVOT TABLE GENERATOR VIEW -->
+      <div id="pivotSection" class="app-section hidden flex flex-col gap-6">
+        
+        <!-- Drag and Drop Control Station -->
+        <div class="glass-panel p-5 flex flex-col gap-5">
+          <h3 class="font-bold text-sm text-emerald-950 border-b border-emerald-100/50 pb-2">เครื่องมือสร้างตาราง</h3>
+          
+          <!-- Dimensions Pool (Draggable Cards) -->
+          <div class="flex flex-col gap-2">
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">มิติตัวแปร (สามารถลากลงกล่องด้านล่างได้)</span>
+            <div id="pivotFieldsSource" class="flex flex-wrap gap-3 py-2">
+              <div draggable="true" data-field="classroom" class="pivot-field-card bg-emerald-100/50 border border-emerald-300/40 text-emerald-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>ห้องเรียน</span>
+              </div>
+              <div draggable="true" data-field="teacher" class="pivot-field-card bg-emerald-100/50 border border-emerald-300/40 text-emerald-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>ครูผู้รับผิดชอบ</span>
+              </div>
+              <div draggable="true" data-field="serviceType" class="pivot-field-card bg-cyan-100/50 border border-cyan-300/40 text-cyan-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>ประเภทบริการ</span>
+              </div>
+              <div draggable="true" data-field="disabilityType" class="pivot-field-card bg-purple-100/50 border border-purple-300/40 text-purple-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>ความพิการ (บัตร)</span>
+              </div>
+              <div draggable="true" data-field="disabilityScreen" class="pivot-field-card bg-purple-100/50 border border-purple-300/40 text-purple-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>ความพิการ (คัดกรอง)</span>
+              </div>
+              <div draggable="true" data-field="ageGroup" class="pivot-field-card bg-cyan-100/50 border border-cyan-300/40 text-cyan-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>ช่วงอายุ</span>
+              </div>
+              <div draggable="true" data-field="specificAge" class="pivot-field-card bg-cyan-100/50 border border-cyan-300/40 text-cyan-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>อายุรายปี</span>
+              </div>
+              <div draggable="true" data-field="nationality" class="pivot-field-card bg-amber-100/50 border border-amber-300/40 text-amber-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>สัญชาติ</span>
+              </div>
+              <div draggable="true" data-field="disabilityOnset" class="pivot-field-card bg-amber-100/50 border border-amber-300/40 text-amber-800 px-3.5 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-1.5">
+                <i data-lucide="grip-vertical" class="w-3.5 h-3.5 cursor-grab"></i>
+                <span>การเกิดความพิการ</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dropzones Row & Col -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            <!-- Rows zone -->
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-semibold text-gray-700 flex items-center gap-1">
+                <i data-lucide="menu" class="w-3.5 h-3.5"></i>
+                แถว (Rows - แนวตั้ง)
+              </span>
+              <div id="pivotRowZone" class="pivot-dropzone p-3 flex flex-wrap gap-2 items-center justify-start">
+                <!-- Tokens appended here by JS -->
+              </div>
+            </div>
+
+            <!-- Columns zone -->
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-semibold text-gray-700 flex items-center gap-1">
+                <i data-lucide="columns" class="w-3.5 h-3.5"></i>
+                คอลัมน์ (Columns - แนวนอน)
+              </span>
+              <div id="pivotColZone" class="pivot-dropzone p-3 flex flex-wrap gap-2 items-center justify-start">
+                <!-- Tokens appended here by JS -->
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- Export tools of Pivot Table -->
+        <div class="glass-panel p-4 flex items-center justify-between gap-4">
+          <div class="text-sm font-semibold text-emerald-950">
+            ตารางความสัมพันธ์ของข้อมูลผู้เรียน
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="exportPivot('pdf')" class="glass-btn-secondary flex items-center gap-1.5 text-xs">
+              <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+              ส่งออก PDF
+            </button>
+            <button onclick="exportPivot('excel')" class="glass-btn-secondary flex items-center gap-1.5 text-xs">
+              <i data-lucide="sheet" class="w-3.5 h-3.5"></i>
+              ส่งออก Excel
+            </button>
+          </div>
+        </div>
+
+        <!-- Pivot Table output content -->
+        <div id="pivotTableContainer" class="glass-panel p-5">
+          <!-- Table populated by JS -->
+        </div>
+
+        <!-- Dynamic Chart related to Pivot fields -->
+        <div id="pivotChartCard" class="glass-panel p-5 flex flex-col gap-4 hidden">
+          <h3 class="font-bold text-sm text-emerald-950">แผนภูมิความสัมพันธ์ของข้อมูลผู้เรียน</h3>
+          <div class="h-80 relative">
+            <canvas id="chartPivot"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SECTION 4: ADMIN SETTINGS VIEW -->
+      <div id="adminSection" class="app-section hidden flex flex-col gap-6">
+        
+        <div class="glass-panel p-6 flex flex-col gap-5">
+          <div class="flex items-center gap-3 border-b border-emerald-100/50 pb-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-800 to-cyan-700 flex items-center justify-center text-white">
+              <i data-lucide="settings" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-base text-emerald-900">แผงตั้งค่าระบบสำหรับผู้ดูแล (Admin Settings)</h3>
+              <p class="text-xs text-gray-500">จัดการฐานข้อมูลและกำหนดค่าตั้งอ้างอิงสำหรับสถิติรายงาน</p>
+            </div>
+          </div>
+          
+          <div class="grid grid-cols-1 gap-5">
+            <!-- Google Sheet URL Configuration -->
+            <div class="flex flex-col gap-2">
+              <label class="text-sm font-semibold text-gray-700">ลิงก์ Google Sheet ฐานข้อมูล</label>
+              <div class="flex flex-col sm:flex-row gap-3">
+                <input type="text" id="adminSpreadsheetUrl" placeholder="https://docs.google.com/spreadsheets/d/..." class="glass-input text-sm flex-1">
+                <button type="button" id="btnAdminFetchTabs" class="glass-btn-primary text-sm flex items-center justify-center gap-1.5 whitespace-nowrap">
+                  <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                  ดึงรายชื่อแผ่นงาน
+                </button>
+              </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- Sheet Tab Name Selector -->
+              <div class="flex flex-col gap-1.5">
+                <label class="text-sm font-semibold text-gray-700">เลือกแผ่นงาน (Sheet Tab)</label>
+                <select id="adminSheetTabSelect" class="select2-enable text-sm w-full">
+                  <option value="">กรุณากดดึงรายชื่อแผ่นงานก่อน...</option>
+                </select>
+              </div>
+
+              <!-- Report Date Selector (B.E. Dropdowns) -->
+              <div class="flex flex-col gap-1.5">
+                <label class="text-sm font-semibold text-gray-700">เลือกวันที่ของรายงาน (พ.ศ. ไทย)</label>
+                <div class="grid grid-cols-3 gap-2">
+                  <select id="adminReportDay" class="glass-input text-sm py-2">
+                    <!-- 1-31 -->
+                  </select>
+                  <select id="adminReportMonth" class="glass-input text-sm py-2">
+                    <option value="1">มกราคม</option>
+                    <option value="2">กุมภาพันธ์</option>
+                    <option value="3">มีนาคม</option>
+                    <option value="4">เมษายน</option>
+                    <option value="5">พฤษภาคม</option>
+                    <option value="6">มิถุนายน</option>
+                    <option value="7">กรกฎาคม</option>
+                    <option value="8">สิงหาคม</option>
+                    <option value="9">กันยายน</option>
+                    <option value="10">ตุลาคม</option>
+                    <option value="11">พฤศจิกายน</option>
+                    <option value="12">ธันวาคม</option>
+                  </select>
+                  <select id="adminReportYear" class="glass-input text-sm py-2">
+                    <!-- BE Years -->
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Column Ordering Configuration -->
+            <div class="flex flex-col gap-2 border-t border-emerald-100/30 pt-4">
+              <label class="text-sm font-semibold text-gray-700">จัดเรียงลำดับหัวข้อคอลัมน์ในตารางนักเรียน (Dynamic Columns)</label>
+              <p class="text-xs text-gray-500">กดปุ่มขึ้น/ลงเพื่อจัดเรียงลำดับการแสดงผลคอลัมน์ในแฟ้มรายชื่อนักเรียน</p>
+              <div id="adminColumnOrderContainer" class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+                <!-- Dynamically populated column items with Up/Down buttons -->
+              </div>
+            </div>
+
+            <!-- Save settings action -->
+            <div class="flex items-center justify-end gap-3 border-t border-emerald-100/50 pt-4 mt-2">
+              <button type="button" id="btnAdminSaveSettings" class="glass-btn-primary text-sm flex items-center gap-1.5">
+                <i data-lucide="check" class="w-4 h-4"></i>
+                บันทึกการตั้งค่าระบบ
+              </button>
+            </div>
+            
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- ADD / EDIT STUDENT MODAL -->
+  <!-- ======================================================== -->
+  <div id="studentModal" class="fixed inset-0 bg-emerald-950/20 backdrop-blur-sm z-50 justify-center items-center p-4 hidden">
+    
+    <div class="glass-panel-mint w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      
+      <!-- Modal Header -->
+      <div class="p-5 border-b border-emerald-100 flex items-center justify-between bg-white/40">
+        <h3 id="modalTitle" class="font-bold text-emerald-900 text-base">เพิ่มข้อมูลนักเรียนใหม่</h3>
+        <button id="btnCloseModal" class="p-1.5 text-gray-500 hover:text-red-600 rounded-lg hover:bg-red-500/10 transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body (Form) -->
+      <form id="studentForm" class="p-6 overflow-y-auto flex-1 flex flex-col gap-5">
+        
+        <!-- Section 1: Basic Information -->
+        <div class="flex flex-col gap-4">
+          <h4 class="text-xs font-bold text-emerald-800 uppercase tracking-wider border-b border-emerald-100/50 pb-1 flex items-center gap-1">
+            <i data-lucide="user" class="w-3.5 h-3.5"></i>
+            ข้อมูลเบื้องต้นนักเรียน
+          </h4>
+          
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Name Input -->
+            <div class="flex flex-col gap-1 md:col-span-1">
+              <label class="text-xs font-semibold text-gray-700">ชื่อ-สกุล <span class="text-red-500">*</span></label>
+              <input type="text" id="studentName" required placeholder="เด็กชาย/หญิง..." class="glass-input text-sm">
+            </div>
+
+            <!-- Classroom Selector -->
+            <div class="flex flex-col gap-1 md:col-span-1">
+              <label class="text-xs font-semibold text-gray-700 flex items-center justify-between">
+                <span>ห้องเรียน/หน่วยบริการ <span class="text-red-500">*</span></span>
+                <button type="button" id="btnAddCustomClassroom" class="text-[10px] text-emerald-800 font-bold hover:underline">เพิ่มห้องใหม่</button>
+              </label>
+              <select id="studentClassroom" required class="select2-enable text-sm">
+                <!-- options -->
+              </select>
+            </div>
+
+            <!-- Teacher Selector -->
+            <div class="flex flex-col gap-1 md:col-span-1">
+              <label class="text-xs font-semibold text-gray-700 flex items-center justify-between">
+                <span>ครูผู้รับผิดชอบ <span class="text-red-500">*</span></span>
+                <button type="button" id="btnAddCustomTeacher" class="text-[10px] text-emerald-800 font-bold hover:underline">เพิ่มครูใหม่</button>
+              </label>
+              <select id="studentTeacher" required class="select2-enable text-sm">
+                <!-- options -->
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: Service details -->
+        <div class="flex flex-col gap-3">
+          <span class="text-xs font-bold text-emerald-800 uppercase tracking-wider border-b border-emerald-100/50 pb-1 flex items-center gap-1">
+            <i data-lucide="file-check-2" class="w-3.5 h-3.5"></i>
+            ประเภทบริการและสัญชาติ
+          </span>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            <!-- Service Type checklist -->
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-semibold text-gray-700">ประเภทบริการ (เลือกอย่างน้อย 1 ประเภท) <span class="text-red-500">*</span></span>
+              <div class="grid grid-cols-3 gap-2 pl-1">
+                <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="svcCenter" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>รับบริการที่ศูนย์</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="svcUnit" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>รับบริการที่หน่วยบริการ</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="svcHome" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>รับบริการที่บ้าน</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Date of Birth (forced display and Thai converted BE picker) -->
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-semibold text-gray-700">วันเดือนปีเกิด (พ.ศ. ไทย) <span class="text-red-500">*</span></label>
+              <input type="date" id="studentDob" required class="glass-input text-sm">
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Section 3: Disabilities & Documents -->
+        <div class="flex flex-col gap-4">
+          <h4 class="text-xs font-bold text-emerald-800 uppercase tracking-wider border-b border-emerald-100/50 pb-1 flex items-center gap-1">
+            <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+            ประเภทความพิการและเอกสารสิทธิ์
+          </h4>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Disability Type Card -->
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-semibold text-gray-700">ประเภทความพิการ (ตามบัตรคนพิการ)</label>
+              <input type="text" id="disabilityCard" placeholder="เช่น บกพร่องทางสติปัญญา..." class="glass-input text-sm">
+            </div>
+
+            <!-- Disability Type Screening -->
+            <div class="flex flex-col gap-1">
+              <label class="text-xs font-semibold text-gray-700">ประเภทความพิการ (ตามแบบคัดกรองศึกษา)</label>
+              <input type="text" id="disabilityScreen" placeholder="เช่น บกพร่องทางร่างกาย..." class="glass-input text-sm">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Documents checkboxes -->
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-semibold text-gray-700">รายการความสมบูรณ์ของเอกสาร</span>
+              <div class="flex flex-col gap-2 pl-1">
+                <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="docCard" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>มีบัตรประจำตัวคนพิการ</span>
+                </label>
+                <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="docCert" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>มีเอกสารรับรองความพิการ</span>
+                </label>
+                <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="docScreen" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>มีแบบคัดกรองทางการศึกษา</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Special flags & notes -->
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-semibold text-gray-700">รายละเอียดเงื่อนไขพิเศษ</span>
+              <div class="flex flex-col gap-2.5 pl-1 mb-2">
+                <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="statusNonThai" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>ไม่ใช่สัญชาติไทย (นักเรียนต่างด้าว)</span>
+                </label>
+                <label class="flex items-center gap-2.5 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" id="statusLater" class="rounded text-emerald-700 focus:ring-emerald-500 w-4 h-4">
+                  <span>พิการภายหลัง (ไม่ได้เป็นแต่กำเนิด)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 4: Remarks -->
+        <div class="flex flex-col gap-1">
+          <label class="text-xs font-semibold text-gray-700">หมายเหตุ</label>
+          <textarea id="studentRemarks" rows="2" placeholder="ระบุเพิ่มเติม เช่น อาการ หรือรายละเอียดโรคประจำตัว..." class="glass-input text-sm resize-none"></textarea>
+        </div>
+
+        <!-- Modal Footer Buttons -->
+        <div class="flex items-center justify-end gap-3 border-t border-emerald-100 pt-5 mt-2 bg-white/20">
+          <button type="button" id="btnCancelForm" class="glass-btn-secondary text-sm">ยกเลิก</button>
+          <button type="submit" id="btnSaveForm" class="glass-btn-primary text-sm flex items-center gap-1.5">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            <span>บันทึกข้อมูล</span>
+          </button>
+        </div>
+
+      </form>
+
+    </div>
+
+  </div>
+
+  <!-- Injection of Custom Frontend JS -->
+  <?!= include('JS'); ?>
+  <script src="app.js"></script>
+</body>
+</html>
