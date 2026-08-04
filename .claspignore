@@ -4,3 +4,7 @@
 .git
 node_modules
 serve.js
+index.html
+style.css
+app.js
+config.js
