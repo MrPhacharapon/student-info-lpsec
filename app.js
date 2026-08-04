@@ -349,12 +349,34 @@ const google = {
           cancelButtonText: 'ยกเลิก',
           confirmButtonColor: '#2E7D32',
           inputValidator: (value) => {
-            if (!value) {
-              return 'กรุณากรอกรหัสผ่าน!';
-            }
-            if (value !== 'studentdata') {
-              return 'รหัสผ่านไม่ถูกต้อง!';
-            }
+            return new Promise((resolve) => {
+              if (!value) {
+                resolve('กรุณากรอกรหัสผ่าน!');
+                return;
+              }
+              
+              // Verify password dynamically via API
+              Swal.showLoading();
+              fetch(CONFIG.API_URL, {
+                method: 'POST',
+                body: JSON.stringify({
+                  action: 'verifyAdminPassword',
+                  payload: { password: value }
+                })
+              })
+              .then(res => res.json())
+              .then(data => {
+                if (data.status === 'success' && data.data.valid) {
+                  resolve(); // Password is correct
+                } else {
+                  resolve('รหัสผ่านไม่ถูกต้อง!'); // Incorrect
+                }
+              })
+              .catch(err => {
+                console.error(err);
+                resolve('เชื่อมต่อฐานข้อมูลล้มเหลว กรุณาลองใหม่');
+              });
+            });
           }
         }).then((result) => {
           if (result.isConfirmed) {
