@@ -102,7 +102,7 @@ const google = {
 
     // Set Chart.js Defaults for larger readable text
     Chart.defaults.font.size = 15;
-    Chart.defaults.font.family = "'Kanit', 'Sarabun', sans-serif";
+    Chart.defaults.font.family = "'Sarabun', sans-serif";
     
     // Bind General Event Listeners
     setupEventListeners();
@@ -1544,8 +1544,8 @@ const google = {
           },
           y: {
             ticks: {
+              padding: 5,
               font: {
-                family: 'Kanit',
                 size: 11
               }
             }
@@ -1620,8 +1620,8 @@ const google = {
           },
           y: {
             ticks: {
+              padding: 5,
               font: {
-                family: 'Kanit',
                 size: 11
               }
             }
