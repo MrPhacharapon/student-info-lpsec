@@ -96,22 +96,28 @@
         
         <a href="#" data-section="dashboard" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-emerald-800 transition bg-emerald-500/20 text-emerald-800 border-l-4 border-emerald-700 font-semibold">
           <i data-lucide="layout-dashboard" class="w-4.5 h-4.5"></i>
-          <span>แผงควบคุมสถิติ</span>
+          <span>ภาพรวม</span>
         </a>
 
-        <a href="#" data-section="students" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800">
+        <a href="#" data-section="students" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800" id="navStudents" style="display:none;">
           <i data-lucide="users" class="w-4.5 h-4.5"></i>
           <span>แฟ้มรายชื่อนักเรียน</span>
         </a>
 
-        <a href="#" data-section="pivot" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800">
+        <a href="#" data-section="pivot" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800" id="navPivot" style="display:none;">
           <i data-lucide="table-2" class="w-4.5 h-4.5"></i>
-          <span>ตารางความสัมพันธ์ของข้อมูล</span>
+          <span>ตารางวิเคราะห์ความสัมพันธ์ของข้อมูล</span>
         </a>
+
+        <button id="btnToggleAdvancedSearch" class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800 w-full text-left">
+          <i data-lucide="search" class="w-4.5 h-4.5"></i>
+          <span>ค้นหาแบบละเอียด</span>
+          <i data-lucide="chevron-down" class="w-4 h-4 ml-auto transition-transform" id="iconAdvancedSearch"></i>
+        </button>
       </div>
 
-      <!-- FILTER CONTROLS: Multi-Level Filters -->
-      <div class="glass-panel p-5 flex flex-col gap-5">
+      <!-- FILTER CONTROLS: Multi-Level Filters (hidden by default, toggled by ค้นหาแบบละเอียด) -->
+      <div id="filterPanel" class="glass-panel p-5 flex flex-col gap-5 hidden">
         <div class="flex items-center justify-between border-b border-emerald-100/50 pb-2">
           <div class="flex items-center gap-2 text-emerald-900 font-bold text-sm">
             <i data-lucide="filter" class="w-4 h-4 text-emerald-800"></i>
@@ -148,10 +154,18 @@
           </select>
         </div>
 
-        <!-- Filter: Age Group dropdown -->
+        <!-- Filter: Age Range dropdown -->
         <div class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold text-emerald-950">ช่วงอายุ / อายุรายปี</label>
-          <select id="filterAgeGroup" class="select2-enable text-sm">
+          <label class="text-xs font-semibold text-emerald-950">ช่วงอายุ</label>
+          <select id="filterAgeRange" class="select2-enable text-sm">
+            <option value="">ทั้งหมด</option>
+          </select>
+        </div>
+
+        <!-- Filter: Age Specific Year dropdown -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold text-emerald-950">อายุรายปี</label>
+          <select id="filterAgeYear" class="select2-enable text-sm">
             <option value="">ทั้งหมด</option>
           </select>
         </div>
@@ -720,6 +734,30 @@
               <p class="text-xs text-gray-500">กดปุ่มขึ้น/ลงเพื่อจัดเรียงลำดับการแสดงผลคอลัมน์ในแฟ้มรายชื่อนักเรียน</p>
               <div id="adminColumnOrderContainer" class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
                 <!-- Dynamically populated column items with Up/Down buttons -->
+              </div>
+            </div>
+
+            <!-- Menu Visibility Toggles -->
+            <div class="flex flex-col gap-3 border-t border-emerald-100/30 pt-4">
+              <label class="text-sm font-semibold text-gray-700">เปิด/ปิด เมนูที่มองเห็นบนหน้าเว็บ</label>
+              <p class="text-xs text-gray-500">ควบคุมการแสดงผลเมนูในแถบเมนูหลัก (การตั้งค่าจะหายไปเมื่อรีเฟรชหน้าเว็บ)</p>
+              <div class="flex flex-col gap-2.5 pl-1">
+                <label class="flex items-center gap-3 cursor-pointer">
+                  <div class="relative">
+                    <input type="checkbox" id="toggleNavStudents" class="sr-only peer">
+                    <div class="w-10 h-5 bg-gray-300 rounded-full peer-checked:bg-emerald-600 transition-colors"></div>
+                    <div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
+                  </div>
+                  <span class="text-sm text-gray-700">แฟ้มรายชื่อนักเรียน</span>
+                </label>
+                <label class="flex items-center gap-3 cursor-pointer">
+                  <div class="relative">
+                    <input type="checkbox" id="toggleNavPivot" class="sr-only peer">
+                    <div class="w-10 h-5 bg-gray-300 rounded-full peer-checked:bg-emerald-600 transition-colors"></div>
+                    <div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
+                  </div>
+                  <span class="text-sm text-gray-700">ตารางวิเคราะห์ความสัมพันธ์ของข้อมูล</span>
+                </label>
               </div>
             </div>
 

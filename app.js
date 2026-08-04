@@ -277,19 +277,19 @@ const google = {
       if (d && d !== "-") filterScrDis.append(new Option(d, d));
     });
 
-    // Age Group (Range & Specific Years)
-    const filterAge = $('#filterAgeGroup').empty().append('<option value="">ทั้งหมด</option>');
-    filterAge.append('<optgroup label="แบ่งตามกลุ่มอายุ">');
-    filterAge.append(new Option('อายุน้อยกว่า 3 ปี', 'range:<3'));
-    filterAge.append(new Option('อายุ 3 - 6 ปี', 'range:3-6'));
-    filterAge.append(new Option('อายุ 7 ปีขึ้นไป', 'range:>=7'));
+    // Age Range (grouped)
+    const filterAgeRange = $('#filterAgeRange').empty().append('<option value="">ทั้งหมด</option>');
+    filterAgeRange.append(new Option('อายุน้อยกว่า 3 ปี', 'range:<3'));
+    filterAgeRange.append(new Option('อายุ 3 - 6 ปี', 'range:3-6'));
+    filterAgeRange.append(new Option('อายุ 7 ปีขึ้นไป', 'range:>=7'));
     
     const hasUnknownDob = state.allStudents.some(s => calculateAge(s.dateOfBirth, s) === null);
     if (hasUnknownDob) {
-      filterAge.append(new Option('ไม่ระบุวันเกิด', 'range:unknown'));
+      filterAgeRange.append(new Option('ไม่ระบุวันเกิด', 'range:unknown'));
     }
-    filterAge.append('</optgroup>');
 
+    // Age Specific Year
+    const filterAgeYear = $('#filterAgeYear').empty().append('<option value="">ทั้งหมด</option>');
     const uniqueAges = new Set();
     state.allStudents.forEach(s => {
       const age = calculateAge(s.dateOfBirth, s);
@@ -298,11 +298,9 @@ const google = {
     const sortedAges = Array.from(uniqueAges).sort((a, b) => a - b);
 
     if (sortedAges.length > 0) {
-      filterAge.append('<optgroup label="แบ่งตามอายุรายปี">');
       sortedAges.forEach(age => {
-        filterAge.append(new Option(`${age} ปี`, `age:${age}`));
+        filterAgeYear.append(new Option(`${age} ปี`, `age:${age}`));
       });
-      filterAge.append('</optgroup>');
     }
   }
 
@@ -325,7 +323,7 @@ const google = {
     });
 
     // Re-bind change events for Select2 because they don't trigger standard jQuery change directly
-    $('#filterClassroom, #filterTeacher, #filterDisabilityCard, #filterDisabilityScreen, #filterAgeGroup').on('change', function() {
+    $('#filterClassroom, #filterTeacher, #filterDisabilityCard, #filterDisabilityScreen, #filterAgeRange, #filterAgeYear').on('change', function() {
       applyFilters();
     });
   }
@@ -389,6 +387,22 @@ const google = {
       }
     });
 
+    // Toggle Advanced Search filter panel
+    $('#btnToggleAdvancedSearch').click(function() {
+      const panel = $('#filterPanel');
+      const icon = $('#iconAdvancedSearch');
+      panel.toggleClass('hidden');
+      icon.toggleClass('rotate-180');
+    });
+
+    // Admin toggle switches: show/hide menu items
+    $('#toggleNavStudents').on('change', function() {
+      $('#navStudents').toggle(this.checked);
+    });
+    $('#toggleNavPivot').on('change', function() {
+      $('#navPivot').toggle(this.checked);
+    });
+
     // Text Search
     $('#searchName').on('input', function() {
       applyFilters();
@@ -406,7 +420,8 @@ const google = {
       $('#filterTeacher').val('').trigger('change');
       $('#filterDisabilityCard').val('').trigger('change');
       $('#filterDisabilityScreen').val('').trigger('change');
-      $('#filterAgeGroup').val('').trigger('change');
+      $('#filterAgeRange').val('').trigger('change');
+      $('#filterAgeYear').val('').trigger('change');
       $('.filter-checkbox').prop('checked', false);
       applyFilters();
       
@@ -585,22 +600,20 @@ const google = {
 
     // Update top bar text dynamically
     const titleEl = $('#topBarTitle');
-    const subtitleEl = $('#topBarSubtitle');
     if (targetSection === 'dashboard') {
-      titleEl.text('แดชบอร์ดสารสนเทศนักเรียนรายบุคคล');
-      subtitleEl.text('ภาคเรียนที่ 1 ปีการศึกษา 2569');
+      titleEl.text('สารสนเทศนักเรียน ศูนย์การศึกษาพิเศษ ประจำจังหวัดลำปาง');
+      // Hide filter panel when in dashboard (overview) mode
+      $('#filterPanel').addClass('hidden');
+      $('#iconAdvancedSearch').removeClass('rotate-180');
       renderDashboard();
     } else if (targetSection === 'students') {
       titleEl.text('แฟ้มรายชื่อนักเรียน');
-      subtitleEl.text('จัดการข้อมูลและตรวจสอบรายละเอียดเอกสารนักเรียนรายบุคคล');
       renderStudentTable();
     } else if (targetSection === 'pivot') {
       titleEl.text('ตารางวิเคราะห์ความสัมพันธ์ของข้อมูล');
-      subtitleEl.text('สร้างตารางความสัมพันธ์เชิงไขว้ (Cross-Tabulation) แบบลากและวาง');
       renderPivotTable();
     } else if (targetSection === 'admin') {
       titleEl.text('ตั้งค่าระบบสำหรับผู้ดูแล (Admin)');
-      subtitleEl.text('ตั้งค่าการเชื่อมต่อฐานข้อมูล Google Sheet และกำหนดค่าตั้งต้น');
     }
   }
 
@@ -701,7 +714,8 @@ const google = {
     const teacherVal = $('#filterTeacher').val();
     const disCardVal = $('#filterDisabilityCard').val();
     const disScrVal = $('#filterDisabilityScreen').val();
-    const ageGroupVal = $('#filterAgeGroup').val();
+    const ageRangeVal = $('#filterAgeRange').val();
+    const ageYearVal = $('#filterAgeYear').val();
     
     // Service Types
     const svcInCenter = $('#filterSvcCenter').is(':checked');
@@ -739,11 +753,11 @@ const google = {
         return false;
       }
       
-      // 5.1 Age Group / Specific Age filter
-      if (ageGroupVal) {
+      // 5.1 Age Range filter
+      if (ageRangeVal) {
         const age = calculateAge(s.dateOfBirth, s);
-        if (ageGroupVal.startsWith('range:')) {
-          const range = ageGroupVal.replace('range:', '');
+        if (ageRangeVal.startsWith('range:')) {
+          const range = ageRangeVal.replace('range:', '');
           if (range === '<3') {
             if (age === null || age >= 3) return false;
           } else if (range === '3-6') {
@@ -753,8 +767,14 @@ const google = {
           } else if (range === 'unknown') {
             if (age !== null) return false;
           }
-        } else if (ageGroupVal.startsWith('age:')) {
-          const specificAge = parseInt(ageGroupVal.replace('age:', ''), 10);
+        }
+      }
+
+      // 5.2 Age Specific Year filter
+      if (ageYearVal) {
+        const age = calculateAge(s.dateOfBirth, s);
+        if (ageYearVal.startsWith('age:')) {
+          const specificAge = parseInt(ageYearVal.replace('age:', ''), 10);
           if (age !== specificAge) return false;
         }
       }
