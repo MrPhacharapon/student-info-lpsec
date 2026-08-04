@@ -339,50 +339,34 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <!-- Age Groups display stats -->
+        <div class="grid grid-cols-1 gap-6">
+          <!-- Age Groups display stats - full width horizontal layout -->
           <div class="glass-panel p-5 flex flex-col gap-4">
             <span class="text-sm font-bold text-emerald-955 flex items-center gap-1.5 border-b border-emerald-100/50 pb-2">
               <i data-lucide="calendar" class="w-4 h-4 text-emerald-800"></i>
               สถิติตามช่วงอายุ (คน)
             </span>
-            <div class="flex flex-col gap-3 mt-1">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-1">
               <!-- Item 1 -->
-              <div class="flex items-center justify-between pb-2.5 border-b border-emerald-100/30 text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-green-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุน้อยกว่า 3 ปี')">
+              <div class="flex items-center justify-between p-3 rounded-xl bg-green-50/50 border border-green-100 cursor-pointer transition-all duration-200 hover:bg-green-100/60 hover:scale-[1.02] hover:shadow-sm active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุน้อยกว่า 3 ปี')">
                 <span class="px-2.5 py-1 rounded-lg bg-green-100 text-green-700 font-bold text-xs whitespace-nowrap">อายุน้อยกว่า 3 ปี</span>
-                <span class="text-emerald-950"><strong id="statAgeUnder3" class="text-base font-extrabold text-emerald-850">0</strong> คน</span>
+                <span class="text-emerald-950"><strong id="statAgeUnder3" class="text-lg font-extrabold text-emerald-850">0</strong> คน</span>
               </div>
               <!-- Item 2 -->
-              <div class="flex items-center justify-between pb-2.5 border-b border-emerald-100/30 text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-emerald-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุ 3 - 6 ปี')">
+              <div class="flex items-center justify-between p-3 rounded-xl bg-emerald-50/50 border border-emerald-100 cursor-pointer transition-all duration-200 hover:bg-emerald-100/60 hover:scale-[1.02] hover:shadow-sm active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุ 3 - 6 ปี')">
                 <span class="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs whitespace-nowrap">อายุ 3 - 6 ปี</span>
-                <span class="text-emerald-950"><strong id="statAge3to6" class="text-base font-extrabold text-emerald-850">0</strong> คน</span>
+                <span class="text-emerald-950"><strong id="statAge3to6" class="text-lg font-extrabold text-emerald-850">0</strong> คน</span>
               </div>
               <!-- Item 3 -->
-              <div class="flex items-center justify-between pb-1.5 text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-cyan-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุ 7 ปีขึ้นไป')">
+              <div class="flex items-center justify-between p-3 rounded-xl bg-cyan-50/50 border border-cyan-100 cursor-pointer transition-all duration-200 hover:bg-cyan-100/60 hover:scale-[1.02] hover:shadow-sm active:scale-95" onclick="showDrillDownDetails('ageGroup', 'อายุ 7 ปีขึ้นไป')">
                 <span class="px-2.5 py-1 rounded-lg bg-cyan-100 text-cyan-700 font-bold text-xs whitespace-nowrap">อายุ 7 ปีขึ้นไป</span>
-                <span class="text-emerald-950"><strong id="statAgeOver7" class="text-base font-extrabold text-emerald-850">0</strong> คน</span>
+                <span class="text-emerald-950"><strong id="statAgeOver7" class="text-lg font-extrabold text-emerald-850">0</strong> คน</span>
               </div>
               <!-- Item 4 (Unknown) -->
-              <div id="containerAgeUnknown" class="flex items-center justify-between pt-2.5 border-t border-dashed border-gray-200 text-sm font-medium hidden cursor-pointer transition-all duration-200 hover:bg-gray-50/30 px-1.5 py-0.5 rounded-lg active:scale-95" onclick="showDrillDownDetails('ageGroup', 'ไม่ระบุวันเกิด')">
+              <div id="containerAgeUnknown" class="flex items-center justify-between p-3 rounded-xl bg-gray-50/50 border border-gray-200 cursor-pointer transition-all duration-200 hover:bg-gray-100/60 hover:scale-[1.02] hover:shadow-sm active:scale-95 hidden" onclick="showDrillDownDetails('ageGroup', 'ไม่ระบุวันเกิด')">
                 <span class="px-2.5 py-1 rounded-lg bg-gray-100 text-gray-700 font-bold text-xs whitespace-nowrap">ไม่ระบุวันเกิด</span>
-                <span class="text-gray-500"><strong id="statAgeUnknown" class="text-base font-extrabold text-gray-750">0</strong> คน</span>
+                <span class="text-gray-500"><strong id="statAgeUnknown" class="text-lg font-extrabold text-gray-750">0</strong> คน</span>
               </div>
-            </div>
-          </div>
-
-          <!-- Chart 1: Service Types -->
-          <div class="glass-panel p-5 flex flex-col gap-4">
-            <h3 class="font-bold text-sm text-emerald-955">สัดส่วนประเภทการรับบริการ</h3>
-            <div class="h-64 relative flex items-center justify-center">
-              <canvas id="chartServiceTypes"></canvas>
-            </div>
-          </div>
-
-          <!-- Chart 2: Age Groups -->
-          <div class="glass-panel p-5 flex flex-col gap-4">
-            <h3 class="font-bold text-sm text-emerald-955">สัดส่วนช่วงอายุของนักเรียน</h3>
-            <div class="h-64 relative flex items-center justify-center">
-              <canvas id="chartAgeGroups"></canvas>
             </div>
           </div>
         </div>
