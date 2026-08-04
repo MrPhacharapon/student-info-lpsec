@@ -15,7 +15,7 @@
   }
 
   body {
-    font-family: 'Kanit', 'Sarabun', sans-serif;
+    font-family: 'Sarabun', sans-serif;
     background: linear-gradient(135deg, #E8F5E9 0%, #E0F7FA 50%, #C8E6C9 100%);
     background-attachment: fixed;
     min-height: 100vh;
