@@ -1,0 +1,1009 @@
+/**
+ * SET Excel Importer & Diff Preview Engine
+ * Project: Student Info LPSEC
+ * 
+ * Functions:
+ * 1. Client-side Excel parsing (.xls, .xlsx) via SheetJS
+ * 2. Header and column structure validation with flexible alias matching
+ * 3. Multi-file joining across SET reports using Citizen ID / Student ID
+ * 4. Compound-key matching & diff comparison against Google Sheets
+ * 5. Strict PII sanitization (masks Citizen ID, keeps data client-side in memory)
+ */
+
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) {
+    module.exports = factory();
+  } else {
+    root.SETImporter = factory();
+  }
+}(typeof self !== 'undefined' ? self : this, function () {
+
+  // Common SET Column Aliases for resilient header matching
+  const COLUMN_ALIASES = {
+    citizenId: [
+      'เลขประจำตัวประชาชน', 'เลขบัตรประชาชน', 'เลขประจำตัวประชาชนผู้เรียน',
+      'citizen_id', 'id_card', 'identification_no', 'เลขบัตรประจำตัวประชาชน'
+    ],
+    studentId: [
+      'เลขประจำตัวนักเรียน', 'รหัสนักเรียน', 'เลขประจำตัว', 'student_id', 'code'
+    ],
+    prefix: [
+      'คำนำหน้า', 'คำนำหน้านาม', 'คำนำหน้าชื่อ', 'prefix', 'title'
+    ],
+    firstName: [
+      'ชื่อ', 'ชื่อตัว', 'first_name', 'firstname'
+    ],
+    lastName: [
+      'นามสกุล', 'ชื่อสกุล', 'last_name', 'lastname'
+    ],
+    fullName: [
+      'ชื่อ-นามสกุล', 'ชื่อ - สกุล', 'ชื่อ-สกุล', 'ชื่อและนามสกุล', 'full_name', 'fullname', 'ชื่อสกุล'
+    ],
+    gender: [
+      'เพศ', 'gender', 'sex'
+    ],
+    dob: [
+      'วันเดือนปีเกิด', 'วันเกิด', 'วัน/เดือน/ปีเกิด', 'date_of_birth', 'birthdate', 'dob'
+    ],
+    disabilityType: [
+      'ประเภทความพิการ', 'ความพิการ', 'ประเภทความพิการตามระบบ set', 'disability_type'
+    ],
+    address: [
+      'ที่อยู่ตามทะเบียนบ้าน', 'ที่อยู่', 'บ้านเลขที่', 'address', 'full_address'
+    ],
+    moo: ['หมู่ที่', 'หมู่', 'moo'],
+    subdistrict: ['ตำบล', 'แขวง', 'subdistrict', 'tambon'],
+    district: ['อำเภอ', 'เขต', 'district', 'amphoe'],
+    province: ['จังหวัด', 'province', 'changwat'],
+    zipcode: ['รหัสไปรษณีย์', 'zipcode', 'postal_code']
+  };
+
+  /**
+   * Normalize Thai Name for compound key matching:
+   * Removes extra spaces and common prefixes (ด.ช., ด.ญ., นาย, นางสาว, etc.)
+   */
+  function normalizeThaiName(name) {
+    if (!name) return '';
+    let clean = name.toString().trim().replace(/\s+/g, ' ');
+    // Remove common prefixes
+    const prefixes = [
+      /^เด็กชาย\s*/, /^เด็กหญิง\s*/, /^ด\.ช\.\s*/, /^ด\.ญ\.\s*/,
+      /^นาย\s*/, /^นางสาว\s*/, /^นาง\s*/, /^น\.ส\.\s*/
+    ];
+    for (const p of prefixes) {
+      if (p.test(clean)) {
+        clean = clean.replace(p, '');
+        break;
+      }
+    }
+    return clean.replace(/\s+/g, '').trim();
+  }
+
+  /**
+   * Clean Citizen ID:
+   * Strips dashes/spaces, ensures 13 digits, preserves leading zeros.
+   */
+  function cleanCitizenId(val) {
+    if (val === undefined || val === null) return '';
+    let str = val.toString().trim().replace(/[-\s]/g, '');
+    // If entered as number or formatted string
+    if (/^\d{1,13}$/.test(str)) {
+      str = str.padStart(13, '0');
+    }
+    return str;
+  }
+
+  /**
+   * Validate Thai 13-digit Citizen ID checksum
+   */
+  function isValidCitizenId(idStr) {
+    if (!idStr) return false;
+    const str = idStr.toString().trim().replace(/[-\s]/g, '');
+    // G-code support for non-Thai / undocumented students (e.g. G123456789012)
+    if (/^[Gg]\d{12}$/.test(str)) {
+      return true;
+    }
+    const clean = cleanCitizenId(str);
+    if (!clean || clean.length !== 13 || !/^\d{13}$/.test(clean)) {
+      return false;
+    }
+    let sum = 0;
+    for (let i = 0; i < 12; i++) {
+      sum += parseInt(clean.charAt(i), 10) * (13 - i);
+    }
+    const check = (11 - (sum % 11)) % 10;
+    return check === parseInt(clean.charAt(12), 10);
+  }
+
+  /**
+   * Mask Citizen ID for privacy protection:
+   * e.g. 1234567890123 -> 1-2345-xxxxx-23-4
+   */
+  function maskCitizenId(idStr) {
+    const clean = cleanCitizenId(idStr);
+    if (!clean || clean.length !== 13) return idStr || '-';
+    return `${clean.substr(0, 1)}-${clean.substr(1, 4)}-xxxxx-${clean.substr(10, 2)}-${clean.substr(12, 1)}`;
+  }
+
+  /**
+   * Clean Student ID:
+   * Preserves leading zeros.
+   */
+  function cleanStudentId(val) {
+    if (val === undefined || val === null) return '';
+    return val.toString().trim();
+  }
+
+  /**
+   * Parse various date formats from Excel / SET to standardized B.E. (DD/MM/YYYY)
+   */
+  function parseDateBE(val) {
+    if (val === undefined || val === null || val === '') return null;
+
+    // 1. If it's an Excel serial date number
+    if (typeof val === 'number') {
+      // Excel serial date 1 = 1900-01-01 (accounting for leap year bug in Excel)
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const date = new Date(excelEpoch.getTime() + val * 86400000);
+      const d = date.getUTCDate();
+      const m = date.getUTCMonth() + 1;
+      const yBE = date.getUTCFullYear() + 543;
+      return {
+        day: d,
+        month: m,
+        yearBE: yBE,
+        formatted: `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${yBE}`
+      };
+    }
+
+    const str = val.toString().trim();
+
+    // 2. Pattern DD/MM/YYYY or DD-MM-YYYY
+    const slashMatch = str.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})$/);
+    if (slashMatch) {
+      const d = parseInt(slashMatch[1], 10);
+      const m = parseInt(slashMatch[2], 10);
+      let y = parseInt(slashMatch[3], 10);
+      // If year is Christian Era (e.g. 2010-2030), convert to BE
+      if (y < 2400) {
+        y += 543;
+      }
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return {
+          day: d,
+          month: m,
+          yearBE: y,
+          formatted: `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+        };
+      }
+    }
+
+    // 3. Pattern YYYY-MM-DD
+    const isoMatch = str.match(/^(\d{4})[\/\.-](\d{1,2})[\/\.-](\d{1,2})$/);
+    if (isoMatch) {
+      let y = parseInt(isoMatch[1], 10);
+      const m = parseInt(isoMatch[2], 10);
+      const d = parseInt(isoMatch[3], 10);
+      if (y < 2400) y += 543;
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return {
+          day: d,
+          month: m,
+          yearBE: y,
+          formatted: `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+        };
+      }
+    }
+
+    // 4. Thai month text pattern: e.g. "10 พฤศจิกายน 2562" or "10 พ.ย. 2562"
+    const thaiMonths = {
+      'ม.ค.': 1, 'มกราคม': 1,
+      'ก.พ.': 2, 'กุมภาพันธ์': 2,
+      'มี.ค.': 3, 'มีนาคม': 3,
+      'เม.ย.': 4, 'เมษายน': 4,
+      'พ.ค.': 5, 'พฤษภาคม': 5,
+      'มิ.ย.': 6, 'มิถุนายน': 6,
+      'ก.ค.': 7, 'กรกฎาคม': 7,
+      'ส.ค.': 8, 'สิงหาคม': 8,
+      'ก.ย.': 9, 'กันยายน': 9,
+      'ต.ค.': 10, 'ตุลาคม': 10,
+      'พ.ย.': 11, 'พฤศจิกายน': 11,
+      'ธ.ค.': 12, 'ธันวาคม': 12
+    };
+
+    for (const [mName, mNum] of Object.entries(thaiMonths)) {
+      if (str.includes(mName)) {
+        const parts = str.split(/\s+/);
+        const d = parseInt(parts[0], 10);
+        let y = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(d) && !isNaN(y)) {
+          if (y < 2400) y += 543;
+          return {
+            day: d,
+            month: mNum,
+            yearBE: y,
+            formatted: `${String(d).padStart(2, '0')}/${String(mNum).padStart(2, '0')}/${y}`
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Calculate exact age in years & months from B.E. birthdate relative to reference date (or today)
+   */
+  function calculateAgeExact(dobBEStr, refDateBEStr) {
+    const dob = parseDateBE(dobBEStr);
+    if (!dob) return null;
+
+    let refDay = 19, refMonth = 6, refYearBE = 2569;
+    if (refDateBEStr) {
+      const refParsed = parseDateBE(refDateBEStr);
+      if (refParsed) {
+        refDay = refParsed.day;
+        refMonth = refParsed.month;
+        refYearBE = refParsed.yearBE;
+      }
+    } else {
+      const now = new Date();
+      refDay = now.getDate();
+      refMonth = now.getMonth() + 1;
+      refYearBE = now.getFullYear() + 543;
+    }
+
+    let years = refYearBE - dob.yearBE;
+    let months = refMonth - dob.month;
+    let days = refDay - dob.day;
+
+    if (days < 0) {
+      months -= 1;
+    }
+    if (months < 0) {
+      years -= 1;
+      months += 12;
+    }
+
+    if (years < 0) return { years: 0, months: 0, text: '0 ปี' };
+
+    let text = `${years} ปี`;
+    if (months > 0) {
+      text += ` ${months} เดือน`;
+    }
+    return { years, months, text };
+  }
+
+  /**
+   * Find column index/key by matching known aliases
+   */
+  function findColumnKey(headers, fieldAliases) {
+    if (!headers || !headers.length) return null;
+    const cleanHeaders = headers.map(h => h ? h.toString().trim().toLowerCase().replace(/[\s_\-]/g, '') : '');
+    
+    for (const alias of fieldAliases) {
+      const cleanAlias = alias.toLowerCase().replace(/[\s_\-]/g, '');
+      const idx = cleanHeaders.findIndex(h => h === cleanAlias || h.includes(cleanAlias));
+      if (idx !== -1) {
+        return headers[idx];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Inspect and detect column mappings from file headers
+   */
+  function detectColumns(headers) {
+    const mapping = {};
+    for (const [key, aliases] of Object.entries(COLUMN_ALIASES)) {
+      const found = findColumnKey(headers, aliases);
+      if (found) {
+        mapping[key] = found;
+      }
+    }
+    return mapping;
+  }
+
+  /**
+   * Validate headers for specific SET report types
+   */
+  function validateReportHeaders(reportType, headers) {
+    const detected = detectColumns(headers);
+    const errors = [];
+    const warnings = [];
+
+    if (reportType === 'general') {
+      // Must have either citizenId or studentId, plus name and dob
+      if (!detected.citizenId && !detected.studentId) {
+        errors.push('ไม่พบคอลัมน์คีย์หลัก (เลขประจำตัวประชาชน หรือ เลขประจำตัวนักเรียน)');
+      }
+      if (!detected.fullName && (!detected.firstName || !detected.lastName)) {
+        errors.push('ไม่พบคอลัมน์ชื่อ-นามสกุลนักเรียน');
+      }
+      if (!detected.dob) {
+        warnings.push('ไม่พบคอลัมน์วันเดือนปีเกิด');
+      }
+      if (!detected.disabilityType) {
+        warnings.push('ไม่พบคอลัมน์ประเภทความพิการตามระบบ SET');
+      }
+    } else if (reportType === 'address') {
+      if (!detected.citizenId && !detected.studentId) {
+        errors.push('ไม่พบคอลัมน์คีย์เชื่อมโยง (เลขประจำตัวประชาชน หรือ เลขประจำตัวนักเรียน)');
+      }
+      if (!detected.address && !detected.subdistrict) {
+        errors.push('ไม่พบคอลัมน์ที่อยู่ตามทะเบียนบ้าน');
+      }
+    } else if (reportType === 'link') {
+      if (!detected.citizenId || !detected.studentId) {
+        errors.push('ไฟล์เชื่อมโยงต้องมีทั้งคอลัมน์เลขประจำตัวประชาชน และเลขประจำตัวนักเรียน');
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      detected,
+      errors,
+      warnings
+    };
+  }
+
+  /**
+   * Parse rows from Excel raw sheet data
+   */
+  function extractRowsFromSheet(sheet) {
+    if (typeof XLSX === 'undefined') {
+      throw new Error('ไม่พบไลบรารี SheetJS (XLSX) กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+    }
+    // Read raw data retaining cell texts as formatted strings (to preserve leading zeros)
+    const json = XLSX.utils.sheet_to_json(sheet, { raw: false, defval: '' });
+    return json;
+  }
+
+  /**
+   * Normalize an extracted SET student record
+   */
+  function normalizeSetGeneralRow(row, mapping) {
+    const citizenId = cleanCitizenId(row[mapping.citizenId]);
+    const studentId = cleanStudentId(row[mapping.studentId]);
+    
+    let prefix = mapping.prefix ? (row[mapping.prefix] || '').toString().trim() : '';
+    let firstName = mapping.firstName ? (row[mapping.firstName] || '').toString().trim() : '';
+    let lastName = mapping.lastName ? (row[mapping.lastName] || '').toString().trim() : '';
+    let fullName = mapping.fullName ? (row[mapping.fullName] || '').toString().trim() : '';
+
+    if (!fullName && firstName) {
+      fullName = `${prefix} ${firstName} ${lastName}`.trim().replace(/\s+/g, ' ');
+    } else if (fullName && !firstName) {
+      // Split full name if needed
+      const parts = fullName.replace(/\s+/g, ' ').split(' ');
+      if (parts.length >= 2) {
+        firstName = parts[0];
+        lastName = parts.slice(1).join(' ');
+      }
+    }
+
+    const rawDob = mapping.dob ? row[mapping.dob] : '';
+    const parsedDob = parseDateBE(rawDob);
+    const dobFormatted = parsedDob ? parsedDob.formatted : '';
+    const ageObj = dobFormatted ? calculateAgeExact(dobFormatted) : null;
+
+    const disabilityType = mapping.disabilityType ? (row[mapping.disabilityType] || '').toString().trim() : '';
+    const gender = mapping.gender ? (row[mapping.gender] || '').toString().trim() : '';
+
+    return {
+      citizenId,
+      studentId,
+      prefix,
+      firstName,
+      lastName,
+      fullName,
+      normalizedName: normalizeThaiName(fullName),
+      dob: dobFormatted,
+      age: ageObj ? ageObj.text : '',
+      gender,
+      disabilityTypeSet: disabilityType,
+      rawRow: row
+    };
+  }
+
+  /**
+   * Normalize an extracted SET Address record
+   */
+  function normalizeSetAddressRow(row, mapping) {
+    const citizenId = cleanCitizenId(row[mapping.citizenId]);
+    const studentId = cleanStudentId(row[mapping.studentId]);
+
+    let fullAddress = mapping.address ? (row[mapping.address] || '').toString().trim() : '';
+    const moo = mapping.moo ? (row[mapping.moo] || '').toString().trim() : '';
+    const subdistrict = mapping.subdistrict ? (row[mapping.subdistrict] || '').toString().trim() : '';
+    const district = mapping.district ? (row[mapping.district] || '').toString().trim() : '';
+    const province = mapping.province ? (row[mapping.province] || '').toString().trim() : '';
+    const zipcode = mapping.zipcode ? (row[mapping.zipcode] || '').toString().trim() : '';
+
+    if (!fullAddress && (subdistrict || district || province)) {
+      const parts = [];
+      if (moo) parts.push(`หมู่ ${moo}`);
+      if (subdistrict) parts.push(`ต.${subdistrict}`);
+      if (district) parts.push(`อ.${district}`);
+      if (province) parts.push(`จ.${province}`);
+      if (zipcode) parts.push(zipcode);
+      fullAddress = parts.join(' ');
+    }
+
+    return {
+      citizenId,
+      studentId,
+      fullAddress,
+      subdistrict,
+      district,
+      province,
+      zipcode,
+      rawRow: row
+    };
+  }
+
+  /**
+   * Join multiple SET reports on verified keys (Citizen ID / Student ID)
+   */
+  function joinSetReports(generalRows, addressRows = [], linkRows = []) {
+    const joined = [];
+    const unmatched = [];
+    const invalid = [];
+
+    // Map address by citizenId and studentId
+    const addressByCitizenId = new Map();
+    const addressByStudentId = new Map();
+    for (const addr of addressRows) {
+      if (addr.citizenId) addressByCitizenId.set(addr.citizenId, addr);
+      if (addr.studentId) addressByStudentId.set(addr.studentId, addr);
+    }
+
+    // Map link by studentId -> citizenId or vice versa
+    const linkByStudentId = new Map();
+    const linkByCitizenId = new Map();
+    for (const link of linkRows) {
+      if (link.studentId && link.citizenId) {
+        linkByStudentId.set(link.studentId, link.citizenId);
+        linkByCitizenId.set(link.citizenId, link.studentId);
+      }
+    }
+
+    const seenCitizenIds = new Set();
+    const seenStudentIds = new Set();
+
+    for (const gen of generalRows) {
+      // Resolve IDs with link table if needed
+      let citizenId = gen.citizenId;
+      let studentId = gen.studentId;
+
+      if (!citizenId && studentId && linkByStudentId.has(studentId)) {
+        citizenId = linkByStudentId.get(studentId);
+      }
+      if (!studentId && citizenId && linkByCitizenId.has(citizenId)) {
+        studentId = linkByCitizenId.get(citizenId);
+      }
+
+      // Check duplicates
+      let isDuplicate = false;
+      if (citizenId && seenCitizenIds.has(citizenId)) isDuplicate = true;
+      if (studentId && seenStudentIds.has(studentId)) isDuplicate = true;
+
+      if (citizenId) seenCitizenIds.add(citizenId);
+      if (studentId) seenStudentIds.add(studentId);
+
+      // Check validation errors
+      const recordErrors = [];
+      if (isDuplicate) {
+        recordErrors.push('พบเลขประจำตัวซ้ำในชุดข้อมูล SET');
+      }
+      if (citizenId && !isValidCitizenId(citizenId)) {
+        recordErrors.push('เลขประจำตัวประชาชนไม่ถูกต้องตามหลักตรวจสอบ (Checksum)');
+      }
+      if (!gen.fullName) {
+        recordErrors.push('ไม่มีชื่อ-นามสกุลนักเรียน');
+      }
+
+      // Find matching address
+      let matchedAddr = null;
+      if (citizenId && addressByCitizenId.has(citizenId)) {
+        matchedAddr = addressByCitizenId.get(citizenId);
+      } else if (studentId && addressByStudentId.has(studentId)) {
+        matchedAddr = addressByStudentId.get(studentId);
+      }
+
+      const mergedRecord = {
+        citizenId: citizenId || '',
+        studentId: studentId || '',
+        prefix: gen.prefix,
+        firstName: gen.firstName,
+        lastName: gen.lastName,
+        fullName: gen.fullName,
+        normalizedName: gen.normalizedName,
+        dob: gen.dob,
+        age: gen.age,
+        gender: gen.gender,
+        disabilityTypeSet: gen.disabilityTypeSet,
+        address: matchedAddr ? matchedAddr.fullAddress : '',
+        subdistrict: matchedAddr ? matchedAddr.subdistrict : '',
+        district: matchedAddr ? matchedAddr.district : '',
+        province: matchedAddr ? matchedAddr.province : '',
+        zipcode: matchedAddr ? matchedAddr.zipcode : '',
+        hasAddressReport: !!matchedAddr,
+        errors: recordErrors
+      };
+
+      if (recordErrors.length > 0) {
+        invalid.push(mergedRecord);
+      } else {
+        joined.push(mergedRecord);
+      }
+    }
+
+    return {
+      joined,
+      invalid,
+      unmatched
+    };
+  }
+
+  /**
+   * Compare SET data against currently loaded Google Sheets data
+   * Uses Compound Key: Normalized Name + Date of Birth (DD/MM/YYYY)
+   * 
+   * Segregates into 6 buckets:
+   * 1. newInSet: In SET but not in Google Sheets
+   * 2. updatedDiff: In both but attributes differ
+   * 3. matched: In both with identical values
+   * 4. sheetsOnly: In Google Sheets but absent from SET
+   * 5. unmatched: Join key missing or cannot resolve
+   * 6. invalid: Validation / formatting failures
+   */
+  /**
+   * Compare SET data against currently loaded Google Sheets data
+   * 
+   * Strict Identity Verification Rules:
+   * 1. Compound Key (Normalized Name + DOB) is a HEURISTIC / PREDICTED match only, NOT a verified identity guarantee!
+   * 2. If a shared unique identifier (Citizen ID or Student ID) exists on both sides -> 'verified'
+   *    If only Name + DOB matches without shared unique ID -> 'predicted' (requires Admin confirmation)
+   * 3. Collision / Conflict Protection:
+   *    - Multiple students in Google Sheets with identical Name + DOB -> DO NOT auto-match (Flag as collision for Admin)
+   *    - Multiple students in SET with identical Name + DOB -> DO NOT auto-match (Flag as collision for Admin)
+   *    - Name matches but DOB differs (without shared unique ID) -> DO NOT auto-match (Flag as name/DOB conflict)
+   * 
+   * Segregates into 6 buckets:
+   * 1. newInSet: In SET but not in Google Sheets
+   * 2. updatedDiff: In both but attributes differ
+   * 3. matched: In both with identical values
+   * 4. sheetsOnly: In Google Sheets but absent from SET
+   * 5. unmatched: Join key missing, collision, or ambiguous name/DOB conflicts
+   * 6. invalid: Validation / formatting failures
+   */
+  function compareWithGoogleSheets(setJoinedRecords, sheetsStudents = [], referenceReportDate = '') {
+    const newInSet = [];
+    const updatedDiff = [];
+    const matched = [];
+    const sheetsOnly = [];
+    const unmatched = [];
+    const invalid = [];
+
+    // 1. Index Google Sheets students by Compound Key and by Name as ARRAYS (to detect collisions)
+    const sheetsByCompound = new Map(); // compKey -> [wrappedStudents]
+    const sheetsByName = new Map();     // normName -> [wrappedStudents]
+    const sheetsByCitizenId = new Map();
+    const sheetsByStudentId = new Map();
+
+    sheetsStudents.forEach((student, index) => {
+      const normName = normalizeThaiName(student.name);
+      const parsedDob = parseDateBE(student.dateOfBirth);
+      const dobStr = parsedDob ? parsedDob.formatted : (student.dateOfBirth || '').trim();
+      const compKey = `${normName}|${dobStr}`;
+
+      const wrapped = {
+        original: student,
+        index,
+        normName,
+        dob: dobStr,
+        matchedWithSet: false
+      };
+
+      if (!sheetsByCompound.has(compKey)) {
+        sheetsByCompound.set(compKey, []);
+      }
+      sheetsByCompound.get(compKey).push(wrapped);
+
+      if (!sheetsByName.has(normName)) {
+        sheetsByName.set(normName, []);
+      }
+      sheetsByName.get(normName).push(wrapped);
+
+      // Index unique IDs if Google Sheets has them
+      if (student.citizenId) {
+        const cleanCid = cleanCitizenId(student.citizenId);
+        if (cleanCid) sheetsByCitizenId.set(cleanCid, wrapped);
+      }
+      if (student.studentId) {
+        const cleanSid = cleanStudentId(student.studentId);
+        if (cleanSid) sheetsByStudentId.set(cleanSid, wrapped);
+      }
+    });
+
+    // 2. Pre-scan SET records to detect collisions within SET itself
+    const setCompoundCounts = new Map();
+    for (const setRec of setJoinedRecords) {
+      if (setRec.normalizedName && setRec.dob) {
+        const compKey = `${setRec.normalizedName}|${setRec.dob}`;
+        setCompoundCounts.set(compKey, (setCompoundCounts.get(compKey) || 0) + 1);
+      }
+    }
+
+    let verifiedCount = 0;
+    let predictedCount = 0;
+    let conflictCount = 0;
+
+    // 3. Match each SET record
+    for (const setRec of setJoinedRecords) {
+      if (setRec.errors && setRec.errors.length > 0) {
+        invalid.push(setRec);
+        continue;
+      }
+
+      if (!setRec.normalizedName) {
+        unmatched.push({
+          set: setRec,
+          status: 'unmatched',
+          conflictType: 'missing_name',
+          description: 'ไม่สามารถระบุชื่อนักเรียนสำหรับจับคู่'
+        });
+        continue;
+      }
+
+      const compKey = `${setRec.normalizedName}|${setRec.dob}`;
+      let matchedSheetWrapper = null;
+      let matchConfidence = 'predicted'; // 'verified' or 'predicted'
+      let matchConfidenceLabel = 'การจับคู่แบบคาดการณ์ (ชื่อและวันเกิดตรงกัน) รอ Admin ตรวจสอบ';
+
+      // Path A: Check if a shared unique identifier matches (Highest certainty)
+      if (setRec.citizenId && sheetsByCitizenId.has(setRec.citizenId)) {
+        matchedSheetWrapper = sheetsByCitizenId.get(setRec.citizenId);
+        matchConfidence = 'verified';
+        matchConfidenceLabel = 'การจับคู่ที่ยืนยันแล้ว (เลขประจำตัวประชาชนตรงกัน)';
+      } else if (setRec.studentId && sheetsByStudentId.has(setRec.studentId)) {
+        matchedSheetWrapper = sheetsByStudentId.get(setRec.studentId);
+        matchConfidence = 'verified';
+        matchConfidenceLabel = 'การจับคู่ที่ยืนยันแล้ว (รหัสนักเรียนตรงกัน)';
+      }
+
+      // Path B: If no verified unique ID match, use Compound Key (Normalized Name + DOB)
+      if (!matchedSheetWrapper) {
+        // Check for collision within SET (Duplicate student in SET export)
+        if (setCompoundCounts.get(compKey) > 1) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_set_duplicate',
+            description: 'พบชื่อ-สกุล และวันเกิดซ้ำกันหลายคนในข้อมูล SET (ห้ามจับคู่อัตโนมัติ รอ Admin ตรวจสอบตัวบุคคล)'
+          });
+          continue;
+        }
+
+        // Check for collision in Google Sheets (Duplicate student in Sheets)
+        const compMatches = sheetsByCompound.get(compKey) || [];
+        if (compMatches.length > 1) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_sheets_duplicate',
+            description: `พบชื่อ-สกุล และวันเกิดซ้ำกัน ${compMatches.length} คนในฐานข้อมูลเดิม (ห้ามจับคู่อัตโนมัติ รอ Admin ตรวจสอบตัวบุคคล)`
+          });
+          continue;
+        }
+
+        if (compMatches.length === 1) {
+          const candidate = compMatches[0];
+          if (candidate.matchedWithSet) {
+            // Collision: This Google Sheets student was already matched by another SET student!
+            conflictCount++;
+            unmatched.push({
+              set: setRec,
+              status: 'unmatched',
+              conflictType: 'collision_already_matched',
+              description: 'พบการจับคู่ซ้ำซ้อนกับนักเรียนในชีตเดิมที่ถูกจับคู่ไปแล้ว (รอ Admin ตรวจสอบ)'
+            });
+            continue;
+          }
+
+          // Unambiguous predicted match on Name + DOB
+          matchedSheetWrapper = candidate;
+          matchConfidence = 'predicted';
+          matchConfidenceLabel = 'การจับคู่แบบคาดการณ์ (ชื่อและวันเกิดตรงกัน) รอ Admin ตรวจสอบ';
+        } else {
+          // No compound match. Check if name exists with different DOB!
+          const nameCandidates = sheetsByName.get(setRec.normalizedName) || [];
+          if (nameCandidates.length > 0) {
+            // Collision / Conflict: Name matches but DOB differs without unique ID!
+            // Strictly DO NOT auto-match! Flag as conflict for Admin review.
+            conflictCount++;
+            unmatched.push({
+              set: setRec,
+              status: 'unmatched',
+              conflictType: 'name_dob_conflict',
+              description: `พบชื่อตรงกันแต่ข้อมูลวันเกิดขัดแย้ง (${nameCandidates.length} คนในชีตเดิม: ${nameCandidates.map(c => c.dob).join(', ')}) รอ Admin ยืนยันว่าคนเดียวกันหรือคนละคน`,
+              conflictCandidates: nameCandidates.map(c => ({ name: c.original.name, dob: c.dob, rowNumber: c.original.rowNumber }))
+            });
+            continue;
+          }
+        }
+      }
+
+      // If no match found at all -> New from SET
+      if (!matchedSheetWrapper) {
+        newInSet.push({
+          set: setRec,
+          status: 'new',
+          description: 'นักเรียนใหม่ในระบบ SET (ยังไม่มีในระบบข้อมูลเดิม)'
+        });
+      } else {
+        matchedSheetWrapper.matchedWithSet = true;
+        const sheetStudent = matchedSheetWrapper.original;
+
+        if (matchConfidence === 'verified') verifiedCount++;
+        else predictedCount++;
+
+        // Check for field differences (SET is primary source of truth for name, DOB, SET disability)
+        const diffs = [];
+
+        // Compare Name (flag diff only if normalized names differ)
+        if (setRec.fullName && sheetStudent.name && normalizeThaiName(setRec.fullName) !== normalizeThaiName(sheetStudent.name)) {
+          diffs.push({
+            field: 'ชื่อ-นามสกุล',
+            fieldKey: 'name',
+            setVal: setRec.fullName.trim(),
+            sheetVal: sheetStudent.name.trim()
+          });
+        }
+
+        // Compare DOB
+        if (setRec.dob && sheetStudent.dateOfBirth && setRec.dob !== matchedSheetWrapper.dob) {
+          diffs.push({
+            field: 'วันเกิด',
+            fieldKey: 'dob',
+            setVal: setRec.dob,
+            sheetVal: sheetStudent.dateOfBirth
+          });
+        }
+
+        // Disability comparison (SET disability vs Card / Screening)
+        if (setRec.disabilityTypeSet) {
+          const sheetCardDis = sheetStudent.disabilityByCard || '';
+          const sheetScreenDis = sheetStudent.disabilityByScreening || '';
+          if (!sheetCardDis.includes(setRec.disabilityTypeSet) && !sheetScreenDis.includes(setRec.disabilityTypeSet)) {
+            diffs.push({
+              field: 'ประเภทความพิการ (SET)',
+              fieldKey: 'disabilityTypeSet',
+              setVal: setRec.disabilityTypeSet,
+              sheetVal: sheetCardDis || sheetScreenDis || 'ไม่ระบุ'
+            });
+          }
+        }
+
+        // Address comparison (only compare if Google Sheets has address column)
+        if (sheetStudent.address && setRec.address && sheetStudent.address.trim() !== setRec.address.trim()) {
+          diffs.push({
+            field: 'ที่อยู่ตามทะเบียนบ้าน',
+            fieldKey: 'address',
+            setVal: setRec.address,
+            sheetVal: sheetStudent.address
+          });
+        }
+
+        if (diffs.length > 0) {
+          updatedDiff.push({
+            set: setRec,
+            sheet: sheetStudent,
+            diffs,
+            status: 'updated',
+            matchConfidence,
+            matchConfidenceLabel,
+            description: `พบข้อมูลแตกต่าง ${diffs.length} รายการ [${matchConfidenceLabel}]`
+          });
+        } else {
+          matched.push({
+            set: setRec,
+            sheet: sheetStudent,
+            status: 'matched',
+            matchConfidence,
+            matchConfidenceLabel,
+            description: `ข้อมูลตรงกันทุกฟิลด์หลัก [${matchConfidenceLabel}]`
+          });
+        }
+      }
+    }
+
+    // Identify Google Sheets students not found in SET (Requirement 2.3)
+    sheetsStudents.forEach((student) => {
+      const normName = normalizeThaiName(student.name);
+      const parsedDob = parseDateBE(student.dateOfBirth);
+      const dobStr = parsedDob ? parsedDob.formatted : (student.dateOfBirth || '').trim();
+      const compKey = `${normName}|${dobStr}`;
+
+      const wrappers = sheetsByCompound.get(compKey) || [];
+      const wrapper = wrappers.find(w => w.original === student);
+      if (wrapper && !wrapper.matchedWithSet) {
+        sheetsOnly.push({
+          sheet: student,
+          status: 'sheets_only',
+          description: 'มีเฉพาะใน Google Sheets แต่ไม่พบในทะเบียน SET (ต้องตรวจสอบและไม่แสดงต่อ Public)'
+        });
+      }
+    });
+
+    return {
+      summary: {
+        totalSet: setJoinedRecords.length,
+        totalSheets: sheetsStudents.length,
+        newCount: newInSet.length,
+        updatedCount: updatedDiff.length,
+        matchedCount: matched.length,
+        sheetsOnlyCount: sheetsOnly.length,
+        unmatchedCount: unmatched.length,
+        invalidCount: invalid.length,
+        verifiedCount,
+        predictedCount,
+        conflictCount
+      },
+      newInSet,
+      updatedDiff,
+      matched,
+      sheetsOnly,
+      unmatched,
+      invalid
+    };
+  }
+
+  /**
+   * Generate Synthetic Anonymized Test Dataset for immediate testing (Zero real PII)
+   */
+  function generateMockTestDataset() {
+    // Mock Students covering key verification cases:
+    // 1. Matched (Predicted Match on Name + DOB, identical fields)
+    // 2. Updated / Diff (Predicted Match on Name + DOB, disability differs)
+    // 3. New in SET (Not present in sheets)
+    // 4. Name/DOB Conflict (Name matches but DOB differs -> strictly NOT auto-matched)
+    // 5. Invalid (Bad checksum & invalid date)
+    const mockGeneral = [
+      {
+        'เลขประจำตัวประชาชน': '1509900123453',
+        'เลขประจำตัวนักเรียน': '69001',
+        'คำนำหน้า': 'เด็กชาย',
+        'ชื่อ': 'สมมุติ',
+        'นามสกุล': 'ทดสอบตรงกัน',
+        'วันเดือนปีเกิด': '10/11/2562',
+        'เพศ': 'ชาย',
+        'ประเภทความพิการ': 'บกพร่องทางสติปัญญา'
+      },
+      {
+        'เลขประจำตัวประชาชน': '1509900234565',
+        'เลขประจำตัวนักเรียน': '69002',
+        'คำนำหน้า': 'เด็กหญิง',
+        'ชื่อ': 'วิไล',
+        'นามสกุล': 'ข้อมูลเปลี่ยน',
+        'วันเดือนปีเกิด': '01/05/2563', // Same DOB to demonstrate predicted match with field diff
+        'เพศ': 'หญิง',
+        'ประเภทความพิการ': 'ออทิสติก'
+      },
+      {
+        'เลขประจำตัวประชาชน': '1509900345677',
+        'เลขประจำตัวนักเรียน': '69003',
+        'คำนำหน้า': 'เด็กชาย',
+        'ชื่อ': 'มาใหม่',
+        'นามสกุล': 'ทะเบียนเซ็ต',
+        'วันเดือนปีเกิด': '01/01/2564', // New in SET
+        'เพศ': 'ชาย',
+        'ประเภทความพิการ': 'บกพร่องทางการได้ยิน'
+      },
+      {
+        'เลขประจำตัวประชาชน': '1509900456789',
+        'เลขประจำตัวนักเรียน': '69004',
+        'คำนำหน้า': 'เด็กชาย',
+        'ชื่อ': 'เอกชัย',
+        'นามสกุล': 'วันเกิดขัดแย้ง',
+        'วันเดือนปีเกิด': '20/08/2561', // Differs from Sheets (15/03/2561) -> Conflict
+        'เพศ': 'ชาย',
+        'ประเภทความพิการ': 'บกพร่องทางการเห็น'
+      },
+      {
+        'เลขประจำตัวประชาชน': '9999999999999', // Invalid checksum
+        'เลขประจำตัวนักเรียน': '69005',
+        'คำนำหน้า': 'เด็กหญิง',
+        'ชื่อ': 'ผิดพลาด',
+        'นามสกุล': 'เลขบัตรผิด',
+        'วันเดือนปีเกิด': '32/13/2562', // Invalid date
+        'เพศ': 'หญิง',
+        'ประเภทความพิการ': 'พิการซ้ำซ้อน'
+      }
+    ];
+
+    const mockAddress = [
+      {
+        'เลขประจำตัวประชาชน': '1509900123453',
+        'ที่อยู่ตามทะเบียนบ้าน': '123 หมู่ 4 ต.พิชัย อ.เมือง จ.ลำปาง 52000'
+      },
+      {
+        'เลขประจำตัวประชาชน': '1509900234565',
+        'ที่อยู่ตามทะเบียนบ้าน': '45/1 หมู่ 2 ต.บ่อแฮ้ว อ.เมือง จ.ลำปาง 52100'
+      },
+      {
+        'เลขประจำตัวประชาชน': '1509900345677',
+        'ที่อยู่ตามทะเบียนบ้าน': '88 หมู่ 1 ต.สบตุ๋ย อ.เมือง จ.ลำปาง 52100'
+      }
+    ];
+
+    // Mock Google Sheets students to compare against
+    const mockSheets = [
+      {
+        rowNumber: 3,
+        name: 'เด็กชายสมมุติ ทดสอบตรงกัน',
+        dateOfBirth: '10/11/2562',
+        classroom: 'สงวนจันทร์',
+        teacher: 'ครูทดสอบ หนึ่ง',
+        disabilityByCard: 'บกพร่องทางสติปัญญา',
+        disabilityByScreening: 'บกพร่องทางสติปัญญา'
+      },
+      {
+        rowNumber: 4,
+        name: 'เด็กหญิงวิไล ข้อมูลเปลี่ยน',
+        dateOfBirth: '01/05/2563',
+        classroom: 'สงวนจันทร์',
+        teacher: 'ครูทดสอบ สอง',
+        disabilityByCard: 'บกพร่องทางการเรียนรู้', // Differs from SET (ออทิสติก)
+        disabilityByScreening: 'บกพร่องทางการเรียนรู้'
+      },
+      {
+        rowNumber: 5,
+        name: 'เด็กชายเอกชัย วันเกิดขัดแย้ง',
+        dateOfBirth: '15/03/2561', // Differs from SET (20/08/2561) -> Causes conflict
+        classroom: 'ห้องบัวหลวง',
+        teacher: 'ครูทดสอบ สาม',
+        disabilityByCard: 'บกพร่องทางการเห็น',
+        disabilityByScreening: 'บกพร่องทางการเห็น'
+      },
+      {
+        rowNumber: 6,
+        name: 'เด็กชายสุชาติ เฉพาะชีตเดิม',
+        dateOfBirth: '12/12/2561',
+        classroom: 'ห้องบัวหลวง',
+        teacher: 'ครูทดสอบ สี่',
+        disabilityByCard: 'บกพร่องทางร่างกาย',
+        disabilityByScreening: 'บกพร่องทางร่างกาย'
+      }
+    ];
+
+    return {
+      mockGeneral,
+      mockAddress,
+      mockSheets
+    };
+  }
+
+  return {
+    normalizeThaiName,
+    cleanCitizenId,
+    isValidCitizenId,
+    maskCitizenId,
+    cleanStudentId,
+    parseDateBE,
+    calculateAgeExact,
+    detectColumns,
+    validateReportHeaders,
+    extractRowsFromSheet,
+    normalizeSetGeneralRow,
+    normalizeSetAddressRow,
+    joinSetReports,
+    compareWithGoogleSheets,
+    generateMockTestDataset,
+    COLUMN_ALIASES
+  };
+}));

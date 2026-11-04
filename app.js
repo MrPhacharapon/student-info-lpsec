@@ -83,7 +83,23 @@ const google = {
     pivotCols: [], // selected col fields
     dashboardCharts: {},
     pivotChart: null,
-    columnOrder: ['name', 'classroom', 'teacher', 'serviceType', 'disabilityType', 'documents', 'birthday']
+    columnOrder: ['name', 'classroom', 'teacher', 'serviceType', 'disabilityType', 'documents', 'birthday'],
+    setImport: {
+      generalRows: [],
+      addressRows: [],
+      linkRows: [],
+      generalHeaders: [],
+      addressHeaders: [],
+      linkHeaders: [],
+      generalMapping: {},
+      addressMapping: {},
+      linkMapping: {},
+      joinedRecords: [],
+      diffResult: null,
+      activeCategoryFilter: 'all',
+      maskPii: true,
+      currentDiffRecord: null
+    }
   };
 
   // Thai Short Month Names for Display
@@ -588,6 +604,9 @@ const google = {
     $(document).on('click', '#btnCloseDrillDown', function() {
       $('#chartDrillDownContainer').addClass('hidden');
     });
+
+    // Initialize SET Excel Importer Events
+    initSetImportEvents();
   }
 
   // Section toggle helper
@@ -2400,3 +2419,688 @@ const google = {
       });
     }, 1200);
   };
+
+  // ========================================================
+  // SET EXCEL IMPORTER & ADMIN PREVIEW (PHASE 1)
+  // ========================================================
+
+  function initSetImportEvents() {
+    // 1. Admin Sub-Navigation Tabs
+    $('#adminTabBtnGeneral').click(function() {
+      $(this).addClass('bg-emerald-700 text-white shadow-sm').removeClass('text-gray-600 hover:bg-white/50 hover:text-emerald-800');
+      $('#adminTabBtnSetImport').removeClass('bg-emerald-700 text-white shadow-sm').addClass('text-gray-600 hover:bg-white/50 hover:text-emerald-800');
+      $('#adminTabPanelGeneral').removeClass('hidden');
+      $('#adminTabPanelSetImport').addClass('hidden');
+    });
+
+    $('#adminTabBtnSetImport').click(function() {
+      $(this).addClass('bg-emerald-700 text-white shadow-sm').removeClass('text-gray-600 hover:bg-white/50 hover:text-emerald-800');
+      $('#adminTabBtnGeneral').removeClass('bg-emerald-700 text-white shadow-sm').addClass('text-gray-600 hover:bg-white/50 hover:text-emerald-800');
+      $('#adminTabPanelGeneral').addClass('hidden');
+      $('#adminTabPanelSetImport').removeClass('hidden');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    });
+
+    // 2. File Input Handlers
+    $('#setFileGeneral').on('change', function(e) {
+      const file = e.target.files[0];
+      if (file) handleSetFileUpload(file, 'general');
+    });
+
+    $('#setFileAddress').on('change', function(e) {
+      const file = e.target.files[0];
+      if (file) handleSetFileUpload(file, 'address');
+    });
+
+    $('#setFileLink').on('change', function(e) {
+      const file = e.target.files[0];
+      if (file) handleSetFileUpload(file, 'link');
+    });
+
+    // 3. Action Buttons
+    $('#btnRunSetPreview').click(function() {
+      executeSetImportPreview();
+    });
+
+    $('#btnLoadMockSetData').click(function() {
+      loadMockSetData();
+    });
+
+    $('#btnClearSetData').click(function() {
+      clearSetImportState();
+    });
+
+    // 4. Category Cards & Tab Filtering
+    $(document).on('click', '.set-category-card', function() {
+      const category = $(this).data('category');
+      setCategoryFilter(category);
+    });
+
+    $(document).on('click', '.set-filter-tab', function() {
+      const filter = $(this).data('filter');
+      setCategoryFilter(filter);
+    });
+
+    // 5. In-table Search
+    $('#setSearchInput').on('input', function() {
+      renderSetPreviewTable();
+    });
+
+    // 6. PII Masking Toggle
+    $('#btnTogglePiiMask').click(function() {
+      state.setImport.maskPii = !state.setImport.maskPii;
+      const btn = $(this);
+      const icon = $('#iconPiiMask');
+      const text = $('#textPiiMask');
+
+      if (state.setImport.maskPii) {
+        text.text('ซ่อนเลขบัตรประชาชน (Masked)');
+        icon.attr('data-lucide', 'eye');
+        btn.removeClass('bg-amber-100 text-amber-900 border-amber-300').addClass('text-gray-700');
+      } else {
+        text.text('แสดงเลขบัตรประชาชน (Unmasked)');
+        icon.attr('data-lucide', 'eye-off');
+        btn.addClass('bg-amber-100 text-amber-900 border-amber-300').removeClass('text-gray-700');
+      }
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+      renderSetPreviewTable();
+    });
+
+    // 7. Diff Detail Modal Events
+    $(document).on('click', '.btn-view-set-diff', function() {
+      const index = $(this).data('index');
+      const category = $(this).data('category');
+      openSetDiffModal(category, index);
+    });
+
+    $('#btnCloseSetDiffModal, #btnCloseSetDiffModalBtn').click(function() {
+      $('#setDiffModal').addClass('hidden');
+    });
+
+    $('#setDiffModal').click(function(e) {
+      if ($(e.target).is('#setDiffModal')) {
+        $('#setDiffModal').addClass('hidden');
+      }
+    });
+  }
+
+  // Handle Reading & Validating Excel file client-side
+  function handleSetFileUpload(file, reportType) {
+    if (typeof XLSX === 'undefined') {
+      Swal.fire('ข้อผิดพลาด', 'ไม่พบไลบรารี SheetJS (XLSX) กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true, raw: false });
+        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+          throw new Error('ไม่พบแผ่นงาน (Sheet) ในไฟล์ Excel ที่เลือก');
+        }
+
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = SETImporter.extractRowsFromSheet(firstSheet);
+        if (rows.length === 0) {
+          throw new Error('ไฟล์ที่เลือกไม่มีข้อมูล (แถวว่างเปล่า)');
+        }
+
+        const headers = Object.keys(rows[0]);
+        const validation = SETImporter.validateReportHeaders(reportType, headers);
+
+        if (reportType === 'general') {
+          state.setImport.generalRows = rows;
+          state.setImport.generalHeaders = headers;
+          state.setImport.generalMapping = validation.detected;
+
+          $('#fileInfoGeneral').text(`${file.name} (${rows.length} รายการ, ${headers.length} คอลัมน์)`);
+          if (validation.valid) {
+            $('#badgeSetGeneral').removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700').addClass('bg-emerald-100 text-emerald-800').text(`✓ ${rows.length} แถว`);
+          } else {
+            $('#badgeSetGeneral').removeClass('bg-gray-100 text-gray-600 bg-emerald-100 text-emerald-800').addClass('bg-red-100 text-red-700').text('⚠️ คอลัมน์ไม่ครบ');
+          }
+        } else if (reportType === 'address') {
+          state.setImport.addressRows = rows;
+          state.setImport.addressHeaders = headers;
+          state.setImport.addressMapping = validation.detected;
+
+          $('#fileInfoAddress').text(`${file.name} (${rows.length} รายการ, ${headers.length} คอลัมน์)`);
+          if (validation.valid) {
+            $('#badgeSetAddress').removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700').addClass('bg-emerald-100 text-emerald-800').text(`✓ ${rows.length} แถว`);
+          } else {
+            $('#badgeSetAddress').removeClass('bg-gray-100 text-gray-600 bg-emerald-100 text-emerald-800').addClass('bg-red-100 text-red-700').text('⚠️ คอลัมน์ไม่ครบ');
+          }
+        } else if (reportType === 'link') {
+          state.setImport.linkRows = rows;
+          state.setImport.linkHeaders = headers;
+          state.setImport.linkMapping = validation.detected;
+
+          $('#fileInfoLink').text(`${file.name} (${rows.length} รายการ, ${headers.length} คอลัมน์)`);
+          if (validation.valid) {
+            $('#badgeSetLink').removeClass('bg-gray-100 text-gray-500').addClass('bg-emerald-100 text-emerald-800').text(`✓ ${rows.length} แถว`);
+          }
+        }
+
+        // Show warnings/errors if any
+        displayValidationAlerts(reportType, validation);
+
+        // Check if we can enable Run Preview button (General report is required)
+        if (state.setImport.generalRows.length > 0 && state.setImport.generalMapping.fullName) {
+          $('#btnRunSetPreview').prop('disabled', false);
+        }
+
+      } catch (err) {
+        Swal.fire('ข้อผิดพลาดในการอ่านไฟล์', err.message, 'error');
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+  }
+
+  function displayValidationAlerts(reportType, validation) {
+    const alertBox = $('#setValidationAlertBox');
+    if (!validation.errors.length && !validation.warnings.length) {
+      alertBox.addClass('hidden');
+      return;
+    }
+
+    let html = '';
+    if (validation.errors.length) {
+      html += `<div class="text-xs text-red-700 font-bold flex items-center gap-1.5"><i data-lucide="alert-circle" class="w-4 h-4 text-red-600"></i> ข้อผิดพลาดคอลัมน์ (${reportType}): ${validation.errors.join(', ')}</div>`;
+    }
+    if (validation.warnings.length) {
+      html += `<div class="text-xs text-amber-700 flex items-center gap-1.5"><i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i> คำแนะนำ (${reportType}): ${validation.warnings.join(', ')}</div>`;
+    }
+
+    alertBox.html(html).removeClass('hidden').addClass('bg-amber-500/10 border-amber-300');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  // Execute SET Data Preview
+  function executeSetImportPreview() {
+    if (!state.setImport.generalRows || state.setImport.generalRows.length === 0) {
+      Swal.fire('แจ้งเตือน', 'กรุณาเลือกไฟล์รายงานข้อมูลนักเรียน (ไฟล์ที่ 1) ก่อนเริ่มประมวลผล', 'warning');
+      return;
+    }
+
+    showLoading(true);
+
+    setTimeout(() => {
+      try {
+        // 1. Normalize Rows
+        const normalizedGen = state.setImport.generalRows.map(r => SETImporter.normalizeSetGeneralRow(r, state.setImport.generalMapping));
+        const normalizedAddr = state.setImport.addressRows.map(r => SETImporter.normalizeSetAddressRow(r, state.setImport.addressMapping));
+
+        // 2. Multi-report join
+        const joinResult = SETImporter.joinSetReports(normalizedGen, normalizedAddr, state.setImport.linkRows);
+
+        // 3. Diff Comparison with Google Sheets
+        const refDate = state.appConfig ? state.appConfig.reportDate : '';
+        const diffResult = SETImporter.compareWithGoogleSheets(joinResult.joined, state.allStudents, refDate);
+
+        // Merge join invalid rows into diff invalid
+        if (joinResult.invalid && joinResult.invalid.length > 0) {
+          diffResult.invalid = diffResult.invalid.concat(joinResult.invalid.map(inv => ({
+            set: inv,
+            status: 'invalid',
+            description: inv.errors.join(', ')
+          })));
+          diffResult.summary.invalidCount = diffResult.invalid.length;
+        }
+
+        state.setImport.diffResult = diffResult;
+        state.setImport.joinedRecords = joinResult.joined;
+
+        // 4. Update UI Counters
+        updateSetPreviewCounters(diffResult.summary);
+
+        // 5. Render Table
+        state.setImport.activeCategoryFilter = 'all';
+        renderSetPreviewTable();
+
+        // 6. Show Results Container
+        $('#setPreviewResultsContainer').removeClass('hidden');
+
+        showLoading(false);
+
+        // Scroll to results
+        $('html, body').animate({
+          scrollTop: $('#setPreviewResultsContainer').offset().top - 80
+        }, 500);
+
+      } catch (err) {
+        showLoading(false);
+        Swal.fire('เกิดข้อผิดพลาดในการประมวลผล', err.message, 'error');
+      }
+    }, 200);
+  }
+
+  // Update Summary Badges and Tab Counters
+  function updateSetPreviewCounters(summary) {
+    $('#countNewInSet').text(summary.newCount);
+    $('#countUpdatedDiff').text(summary.updatedCount);
+    $('#countMatched').text(summary.matchedCount);
+    $('#countSheetsOnly').text(summary.sheetsOnlyCount);
+    $('#countUnmatched').text(summary.unmatchedCount);
+    $('#countInvalid').text(summary.invalidCount);
+
+    const totalAll = summary.newCount + summary.updatedCount + summary.matchedCount + summary.sheetsOnlyCount + summary.unmatchedCount + summary.invalidCount;
+    $('#tabCountAll').text(totalAll);
+    $('#tabCountNew').text(summary.newCount);
+    $('#tabCountUpdated').text(summary.updatedCount);
+    $('#tabCountMatched').text(summary.matchedCount);
+    $('#tabCountSheetsOnly').text(summary.sheetsOnlyCount);
+    $('#tabCountUnmatched').text(summary.unmatchedCount);
+    $('#tabCountInvalid').text(summary.invalidCount);
+  }
+
+  // Switch Category Filter
+  function setCategoryFilter(category) {
+    state.setImport.activeCategoryFilter = category;
+
+    // Update tab styles
+    $('.set-filter-tab').removeClass('bg-emerald-700 text-white font-bold').addClass('text-gray-600 font-medium');
+    $(`.set-filter-tab[data-filter="${category}"]`).addClass('bg-emerald-700 text-white font-bold').removeClass('text-gray-600 font-medium');
+
+    renderSetPreviewTable();
+  }
+
+  // Render Table of Preview Records
+  function renderSetPreviewTable() {
+    const diff = state.setImport.diffResult;
+    if (!diff) return;
+
+    const category = state.setImport.activeCategoryFilter;
+    const search = ($('#setSearchInput').val() || '').trim().toLowerCase();
+
+    // Collect records based on active filter
+    let records = [];
+    if (category === 'all') {
+      records = [
+        ...diff.newInSet.map((item, idx) => ({ ...item, category: 'new', categoryIndex: idx })),
+        ...diff.updatedDiff.map((item, idx) => ({ ...item, category: 'updated', categoryIndex: idx })),
+        ...diff.matched.map((item, idx) => ({ ...item, category: 'matched', categoryIndex: idx })),
+        ...diff.sheetsOnly.map((item, idx) => ({ ...item, category: 'sheets_only', categoryIndex: idx })),
+        ...diff.unmatched.map((item, idx) => ({ ...item, category: 'unmatched', categoryIndex: idx })),
+        ...diff.invalid.map((item, idx) => ({ ...item, category: 'invalid', categoryIndex: idx }))
+      ];
+    } else if (category === 'new') {
+      records = diff.newInSet.map((item, idx) => ({ ...item, category: 'new', categoryIndex: idx }));
+    } else if (category === 'updated') {
+      records = diff.updatedDiff.map((item, idx) => ({ ...item, category: 'updated', categoryIndex: idx }));
+    } else if (category === 'matched') {
+      records = diff.matched.map((item, idx) => ({ ...item, category: 'matched', categoryIndex: idx }));
+    } else if (category === 'sheets_only') {
+      records = diff.sheetsOnly.map((item, idx) => ({ ...item, category: 'sheets_only', categoryIndex: idx }));
+    } else if (category === 'unmatched') {
+      records = diff.unmatched.map((item, idx) => ({ ...item, category: 'unmatched', categoryIndex: idx }));
+    } else if (category === 'invalid') {
+      records = diff.invalid.map((item, idx) => ({ ...item, category: 'invalid', categoryIndex: idx }));
+    }
+
+    // Keyword filtering
+    if (search) {
+      records = records.filter(item => {
+        const setRec = item.set || {};
+        const sheetRec = item.sheet || {};
+        const name = (setRec.fullName || sheetRec.name || '').toLowerCase();
+        const cid = (setRec.citizenId || '').toLowerCase();
+        const sid = (setRec.studentId || '').toLowerCase();
+        const dis = (setRec.disabilityTypeSet || sheetRec.disabilityByCard || '').toLowerCase();
+        return name.includes(search) || cid.includes(search) || sid.includes(search) || dis.includes(search);
+      });
+    }
+
+    const tbody = $('#setPreviewTableBody').empty();
+
+    if (records.length === 0) {
+      $('#setPreviewEmptyState').removeClass('hidden');
+      return;
+    }
+    $('#setPreviewEmptyState').addClass('hidden');
+
+    const badgeStyles = {
+      'new': 'bg-blue-100 text-blue-800 border-blue-200',
+      'updated': 'bg-amber-100 text-amber-800 border-amber-200',
+      'matched': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      'sheets_only': 'bg-purple-100 text-purple-800 border-purple-200',
+      'unmatched': 'bg-gray-100 text-gray-800 border-gray-200',
+      'invalid': 'bg-red-100 text-red-800 border-red-200'
+    };
+
+    const statusLabels = {
+      'new': 'รายการใหม่ใน SET',
+      'updated': 'ข้อมูลเปลี่ยนแปลง',
+      'matched': 'ข้อมูลตรงกัน',
+      'sheets_only': 'มีเฉพาะในชีตเดิม',
+      'unmatched': 'จับคู่ไม่ได้',
+      'invalid': 'ข้อมูลผิดปกติ'
+    };
+
+    records.forEach((item, index) => {
+      const setRec = item.set || {};
+      const sheetRec = item.sheet || {};
+
+      const studentId = setRec.studentId || '-';
+      const rawCid = setRec.citizenId || '-';
+      const citizenIdDisplay = state.setImport.maskPii ? SETImporter.maskCitizenId(rawCid) : rawCid;
+
+      const name = setRec.fullName || sheetRec.name || '-';
+      const dob = setRec.dob || sheetRec.dateOfBirth || '-';
+      const age = setRec.age || sheetRec.age || '-';
+      const dobAge = dob !== '-' ? `${dob} (${age})` : '-';
+
+      const disability = setRec.disabilityTypeSet || sheetRec.disabilityByCard || sheetRec.disabilityByScreening || '-';
+      const address = setRec.address || '-';
+
+      const badgeCls = badgeStyles[item.category] || 'bg-gray-100 text-gray-700';
+      const statusLabel = statusLabels[item.category] || item.category;
+
+      let confidenceBadge = '';
+      if (item.matchConfidence === 'verified') {
+        confidenceBadge = `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 ml-1" title="ยืนยันด้วยรหัสประจำตัวตรงกัน">ยืนยันแล้ว</span>`;
+      } else if (item.matchConfidence === 'predicted') {
+        confidenceBadge = `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200 ml-1" title="คาดการณ์ด้วยชื่อและวันเกิด (ยังไม่มีรหัสประจำตัวยืนยันตรงกัน)">คาดการณ์</span>`;
+      } else if (item.conflictType) {
+        confidenceBadge = `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 ml-1" title="พบข้อมูลขัดแย้ง/ซ้ำซ้อน">รอตรวจสอบ</span>`;
+      }
+
+      let diffSummary = item.description || '-';
+      if (item.category === 'updated' && item.diffs) {
+        diffSummary = item.diffs.map(d => `<span class="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[11px] font-semibold mr-1 mb-1">${d.field}</span>`).join('');
+      }
+
+      const rowHtml = `
+        <tr class="hover:bg-white/70 transition">
+          <td class="px-3 py-3 text-center text-gray-500 font-mono">${index + 1}</td>
+          <td class="px-3 py-3 font-mono font-medium text-emerald-950">${studentId}</td>
+          <td class="px-3 py-3 font-mono text-gray-600">${citizenIdDisplay}</td>
+          <td class="px-3 py-3 font-semibold text-emerald-950">${name}</td>
+          <td class="px-3 py-3 text-gray-600">${dobAge}</td>
+          <td class="px-3 py-3 text-gray-700">${disability}</td>
+          <td class="px-3 py-3 text-gray-600 max-w-xs truncate" title="${address}">${address}</td>
+          <td class="px-3 py-3 text-center whitespace-nowrap">
+            <span class="inline-block px-2.5 py-1 rounded-full text-[11px] font-bold border ${badgeCls}">
+              ${statusLabel}
+            </span>
+            ${confidenceBadge}
+          </td>
+          <td class="px-3 py-3 text-xs text-gray-600 max-w-xs">${diffSummary}</td>
+          <td class="px-3 py-3 text-center whitespace-nowrap">
+            <button type="button" class="btn-view-set-diff text-xs px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium transition" data-category="${item.category}" data-index="${item.categoryIndex}">
+              ดูรายละเอียด
+            </button>
+          </td>
+        </tr>
+      `;
+
+      tbody.append(rowHtml);
+    });
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  // Open Diff Modal for Side-by-Side Comparison
+  function openSetDiffModal(category, categoryIndex) {
+    const diff = state.setImport.diffResult;
+    if (!diff) return;
+
+    let item = null;
+    if (category === 'new') item = diff.newInSet[categoryIndex];
+    else if (category === 'updated') item = diff.updatedDiff[categoryIndex];
+    else if (category === 'matched') item = diff.matched[categoryIndex];
+    else if (category === 'sheets_only') item = diff.sheetsOnly[categoryIndex];
+    else if (category === 'unmatched') item = diff.unmatched[categoryIndex];
+    else if (category === 'invalid') item = diff.invalid[categoryIndex];
+
+    if (!item) return;
+
+    const setRec = item.set || {};
+    const sheetRec = item.sheet || {};
+
+    const studentName = setRec.fullName || sheetRec.name || 'ไม่ระบุชื่อ';
+    $('#diffModalStudentName').text(`รายละเอียดเปรียบเทียบ: ${studentName}`);
+
+    // Status Banner in modal
+    const banner = $('#diffModalStatusBanner');
+    const badgeColors = {
+      'new': 'bg-blue-50 border-blue-200 text-blue-900',
+      'updated': 'bg-amber-50 border-amber-200 text-amber-900',
+      'matched': 'bg-emerald-50 border-emerald-200 text-emerald-900',
+      'sheets_only': 'bg-purple-50 border-purple-200 text-purple-900',
+      'unmatched': 'bg-gray-50 border-gray-200 text-gray-900',
+      'invalid': 'bg-red-50 border-red-200 text-red-900'
+    };
+
+    const statusLabels = {
+      'new': '🆕 รายการใหม่ในระบบ SET (ยังไม่มีในระบบข้อมูลเดิม)',
+      'updated': '⚠️ มีข้อมูลที่เปลี่ยนแปลงระหว่าง SET กับชีตเดิม',
+      'matched': '✅ ข้อมูลตรงกันทุกฟิลด์หลัก',
+      'sheets_only': '📋 มีเฉพาะใน Google Sheets เดิม (ไม่พบใน SET — ต้องตรวจสอบและไม่แสดงต่อ Public)',
+      'unmatched': '❓ คีย์ไม่สมบูรณ์หรือไม่สามารถจับคู่ได้',
+      'invalid': '❌ ข้อมูลผิดปกติหรือไม่ถูกต้องตามรูปแบบ'
+    };
+
+    banner.attr('class', `p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold ${badgeColors[category] || 'bg-gray-50'}`);
+    banner.html(`
+      <span>${statusLabels[category] || category}</span>
+      <span class="font-mono">${setRec.citizenId ? SETImporter.maskCitizenId(setRec.citizenId) : '-'}</span>
+    `);
+
+    // Remove existing confidence alerts if any
+    $('#diffModalConfidenceAlert').remove();
+    let confidenceHtml = '';
+    if (item.matchConfidence === 'predicted') {
+      confidenceHtml = `
+        <div id="diffModalConfidenceAlert" class="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-start gap-2">
+          <i data-lucide="info" class="w-4 h-4 text-blue-700 shrink-0 mt-0.5"></i>
+          <div><b>การจับคู่แบบคาดการณ์ (Heuristic Match):</b> รายการนี้จับคู่ด้วยชื่อ-สกุล และวันเกิดตรงกัน แต่ยังไม่มีเลขประจำตัวประชาชนตรงกันข้ามระบบ โปรดตรวจสอบก่อนนำเข้าจริง</div>
+        </div>
+      `;
+    } else if (item.matchConfidence === 'verified') {
+      confidenceHtml = `
+        <div id="diffModalConfidenceAlert" class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-start gap-2">
+          <i data-lucide="check-circle" class="w-4 h-4 text-emerald-700 shrink-0 mt-0.5"></i>
+          <div><b>การจับคู่ที่ยืนยันแล้ว:</b> รายการนี้ได้รับการยืนยันด้วยรหัสประจำตัวตรงกันข้ามระบบ</div>
+        </div>
+      `;
+    } else if (item.conflictType) {
+      confidenceHtml = `
+        <div id="diffModalConfidenceAlert" class="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2">
+          <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-700 shrink-0 mt-0.5"></i>
+          <div><b>ตรวจพบข้อมูลขัดแย้งหรือซ้ำซ้อน:</b> ${item.description} ระบบปฏิเสธการจับคู่อัตโนมัติเพื่อให้ผู้ดูแลระบบตรวจสอบตัวบุคคล</div>
+        </div>
+      `;
+    }
+    if (confidenceHtml) {
+      banner.after(confidenceHtml);
+    }
+
+    // Compare fields
+    const fields = [
+      {
+        name: 'รหัสนักเรียน',
+        setVal: setRec.studentId || '-',
+        sheetVal: sheetRec.rowNumber ? `(แถวชีตที่ ${sheetRec.rowNumber})` : '-'
+      },
+      {
+        name: 'เลขประจำตัวประชาชน',
+        setVal: setRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(setRec.citizenId) : setRec.citizenId) : '-',
+        sheetVal: '(ไม่มีในฐานข้อมูลชีตเดิม)'
+      },
+      {
+        name: 'ชื่อ-นามสกุล',
+        setVal: setRec.fullName || '-',
+        sheetVal: sheetRec.name || '-'
+      },
+      {
+        name: 'วันเดือนปีเกิด',
+        setVal: setRec.dob || '-',
+        sheetVal: sheetRec.dateOfBirth || '-'
+      },
+      {
+        name: 'อายุ',
+        setVal: setRec.age || '-',
+        sheetVal: sheetRec.age || '-'
+      },
+      {
+        name: 'เพศ',
+        setVal: setRec.gender || '-',
+        sheetVal: '-'
+      },
+      {
+        name: 'ประเภทความพิการ',
+        setVal: setRec.disabilityTypeSet || '-',
+        sheetVal: sheetRec.disabilityByCard || sheetRec.disabilityByScreening || '-'
+      },
+      {
+        name: 'ที่อยู่ตามทะเบียนบ้าน',
+        setVal: setRec.address || '-',
+        sheetVal: '(ไม่มีในชีตเดิม)'
+      },
+      {
+        name: 'ห้องเรียน/ครูผู้รับผิดชอบ',
+        setVal: '(SET ไม่ได้ระบุ)',
+        sheetVal: sheetRec.classroom ? `${sheetRec.classroom} / ${sheetRec.teacher}` : '-'
+      }
+    ];
+
+    const tbody = $('#diffModalTableBody').empty();
+
+    fields.forEach(f => {
+      let statusTag = '';
+      let rowBg = '';
+
+      if (category === 'new') {
+        statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-blue-100 text-blue-800 font-bold">ข้อมูลใหม่</span>';
+      } else if (category === 'sheets_only') {
+        statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-purple-100 text-purple-800 font-bold">เฉพาะชีตเดิม</span>';
+      } else if (f.setVal !== '-' && f.sheetVal !== '-' && !f.sheetVal.includes('ไม่มี') && f.setVal !== f.sheetVal) {
+        statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-amber-100 text-amber-800 font-bold">แตกต่าง</span>';
+        rowBg = 'bg-amber-50/60 font-semibold';
+      } else if (f.setVal === f.sheetVal && f.setVal !== '-') {
+        statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-emerald-100 text-emerald-800 font-bold">ตรงกัน</span>';
+      } else {
+        statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-gray-100 text-gray-600">-</span>';
+      }
+
+      tbody.append(`
+        <tr class="${rowBg}">
+          <td class="px-4 py-2.5 font-semibold text-gray-800">${f.name}</td>
+          <td class="px-4 py-2.5 text-gray-700 bg-blue-50/30 font-mono">${f.setVal}</td>
+          <td class="px-4 py-2.5 text-gray-700 bg-emerald-50/30 font-mono">${f.sheetVal}</td>
+          <td class="px-4 py-2.5 text-center">${statusTag}</td>
+        </tr>
+      `);
+    });
+
+    $('#setDiffModal').removeClass('hidden');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  // Load Mock Dataset for testing without real personal data
+  function loadMockSetData() {
+    showLoading(true);
+
+    setTimeout(() => {
+      const mock = SETImporter.generateMockTestDataset();
+
+      state.setImport.generalRows = mock.mockGeneral;
+      state.setImport.addressRows = mock.mockAddress;
+      state.setImport.linkRows = [];
+
+      state.setImport.generalHeaders = Object.keys(mock.mockGeneral[0]);
+      state.setImport.addressHeaders = Object.keys(mock.mockAddress[0]);
+
+      state.setImport.generalMapping = SETImporter.detectColumns(state.setImport.generalHeaders);
+      state.setImport.addressMapping = SETImporter.detectColumns(state.setImport.addressHeaders);
+
+      // Update Card Badges
+      $('#badgeSetGeneral').removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700').addClass('bg-blue-100 text-blue-800').text('ชุดจำลอง (5 รายการ)');
+      $('#badgeSetAddress').removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700').addClass('bg-blue-100 text-blue-800').text('ชุดจำลอง (3 รายการ)');
+      $('#fileInfoGeneral').text('mock_set_students_general.xlsx (5 รายการทดสอบ)');
+      $('#fileInfoAddress').text('mock_set_student_address.xlsx (3 รายการทดสอบ)');
+
+      // Normalize & Join
+      const normalizedGen = mock.mockGeneral.map(r => SETImporter.normalizeSetGeneralRow(r, state.setImport.generalMapping));
+      const normalizedAddr = mock.mockAddress.map(r => SETImporter.normalizeSetAddressRow(r, state.setImport.addressMapping));
+      const joinResult = SETImporter.joinSetReports(normalizedGen, normalizedAddr);
+
+      // Compare with mock sheets (to demonstrate all 6 cases cleanly)
+      const diffResult = SETImporter.compareWithGoogleSheets(joinResult.joined, mock.mockSheets);
+
+      if (joinResult.invalid && joinResult.invalid.length > 0) {
+        diffResult.invalid = diffResult.invalid.concat(joinResult.invalid.map(inv => ({
+          set: inv,
+          status: 'invalid',
+          description: inv.errors.join(', ')
+        })));
+        diffResult.summary.invalidCount = diffResult.invalid.length;
+      }
+
+      state.setImport.diffResult = diffResult;
+      state.setImport.joinedRecords = joinResult.joined;
+
+      // Update counters & render
+      updateSetPreviewCounters(diffResult.summary);
+      state.setImport.activeCategoryFilter = 'all';
+      renderSetPreviewTable();
+
+      $('#btnRunSetPreview').prop('disabled', false);
+      $('#setPreviewResultsContainer').removeClass('hidden');
+
+      showLoading(false);
+
+      Swal.fire({
+        icon: 'success',
+        title: 'โหลดชุดข้อมูลทดสอบจำลองสำเร็จ',
+        html: `
+          <div class="text-left text-xs text-gray-700 space-y-1">
+            <p>• <b>ข้อมูลจำลองทั้งหมด:</b> ไม่มีข้อมูลส่วนบุคคลจริง (Zero real PII)</p>
+            <p>• <b>รายการใหม่ (New):</b> ${diffResult.summary.newCount} รายการ</p>
+            <p>• <b>ข้อมูลเปลี่ยนแปลง (Updated):</b> ${diffResult.summary.updatedCount} รายการ</p>
+            <p>• <b>ข้อมูลตรงกัน (Matched):</b> ${diffResult.summary.matchedCount} รายการ</p>
+            <p>• <b>มีเฉพาะในชีต (Sheets Only):</b> ${diffResult.summary.sheetsOnlyCount} รายการ</p>
+            <p>• <b>จับคู่ไม่ได้/ขัดแย้ง (Unmatched/Conflict):</b> ${diffResult.summary.unmatchedCount} รายการ</p>
+            <p>• <b>ข้อมูลผิดปกติ (Invalid):</b> ${diffResult.summary.invalidCount} รายการ</p>
+            <hr class="my-1.5 border-gray-200">
+            <p class="text-emerald-800 font-semibold">• <b>ระดับการจับคู่:</b> คาดการณ์ด้วยชื่อ+วันเกิด ${diffResult.summary.predictedCount} รายการ (ต้องรอ Admin ยืนยัน)</p>
+          </div>
+        `,
+        confirmButtonColor: '#2E7D32'
+      });
+
+      $('html, body').animate({
+        scrollTop: $('#setPreviewResultsContainer').offset().top - 80
+      }, 500);
+
+    }, 300);
+  }
+
+  // Clear SET State
+  function clearSetImportState() {
+    state.setImport = {
+      generalRows: [],
+      addressRows: [],
+      linkRows: [],
+      generalHeaders: [],
+      addressHeaders: [],
+      linkHeaders: [],
+      generalMapping: {},
+      addressMapping: {},
+      linkMapping: {},
+      joinedRecords: [],
+      diffResult: null,
+      activeCategoryFilter: 'all',
+      maskPii: true,
+      currentDiffRecord: null
+    };
+
+    $('#setFileGeneral, #setFileAddress, #setFileLink').val('');
+    $('#badgeSetGeneral, #badgeSetAddress, #badgeSetLink').attr('class', 'text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium').text('ยังไม่เลือก');
+    $('#fileInfoGeneral, #fileInfoAddress, #fileInfoLink').text('');
+    $('#btnRunSetPreview').prop('disabled', true);
+    $('#setPreviewResultsContainer').addClass('hidden');
+    $('#setValidationAlertBox').addClass('hidden');
+  }
