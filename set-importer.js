@@ -853,7 +853,8 @@
 
         let idConflictMsg = '';
         if (setCid && sheetCid && setCid !== sheetCid) {
-          idConflictMsg = `เลขประจำตัวประชาชนขัดแย้งกัน (SET: ${setCid}, ชีตเดิม: ${sheetCid})`;
+          // Zero-PII conflict description: do NOT embed raw 13-digit citizen IDs in free-text messages
+          idConflictMsg = 'เลขประจำตัวประชาชนขัดแย้งกันระหว่างสองระบบ';
         } else if (setSid && sheetSid && setSid !== sheetSid) {
           idConflictMsg = `เลขประจำตัวนักเรียนขัดแย้งกัน (SET: ${setSid}, ชีตเดิม: ${sheetSid})`;
         }
@@ -929,7 +930,8 @@
 
           let idConflictMsg = '';
           if (setCid && sheetCid && setCid !== sheetCid) {
-            idConflictMsg = `เลขประจำตัวประชาชนขัดแย้งกัน (SET: ${setCid}, ชีตเดิม: ${sheetCid})`;
+            // Zero-PII conflict description: do NOT embed raw 13-digit citizen IDs in free-text messages
+            idConflictMsg = 'เลขประจำตัวประชาชนขัดแย้งกันระหว่างสองระบบ';
           } else if (setSid && sheetSid && setSid !== sheetSid) {
             idConflictMsg = `เลขประจำตัวนักเรียนขัดแย้งกัน (SET: ${setSid}, ชีตเดิม: ${sheetSid})`;
           }

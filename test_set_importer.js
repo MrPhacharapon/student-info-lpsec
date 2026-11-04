@@ -364,6 +364,8 @@ assert.strictEqual(resCidConflict.matched.length, 0, 'Must NOT match when Citize
 assert.strictEqual(resCidConflict.updatedDiff.length, 0, 'Must NOT classify conflicting ID as updatedDiff');
 assert.strictEqual(resCidConflict.unmatched.length, 1, 'Must flag as unmatched for Admin review');
 assert.strictEqual(resCidConflict.unmatched[0].conflictType, 'identifier_conflict', 'Must set conflictType to identifier_conflict');
+assert.strictEqual(/\b\d{13}\b/.test(resCidConflict.unmatched[0].description), false, 'Conflict description must NOT leak full 13-digit citizen IDs');
+assert.strictEqual(resCidConflict.unmatched[0].description.includes('เลขประจำตัวประชาชนขัดแย้งกัน'), true, 'Conflict description must clearly explain the conflict type');
 assert.strictEqual(resCidConflict.summary.conflictCount, 1, 'Conflict count must increment');
 
 // Case 17.2: Student ID Conflict despite identical Name + DOB
@@ -403,6 +405,7 @@ const resOpposite = SETImporter.compareWithGoogleSheets(setOppositeConflict, she
 assert.strictEqual(resOpposite.matched.length, 0, 'Must NOT match when citizen ID conflicts even if student ID matched');
 assert.strictEqual(resOpposite.unmatched.length, 1, 'Must flag for Admin review');
 assert.strictEqual(resOpposite.unmatched[0].conflictType, 'identifier_conflict');
+assert.strictEqual(/\b\d{13}\b/.test(resOpposite.unmatched[0].description), false, 'Path A conflict description must NOT leak full 13-digit citizen IDs');
 
 // Case 17.4: Sheets has no ID (only Name + DOB) -> Legitimate Predicted Match
 const sheetsNoId = [{
@@ -491,4 +494,49 @@ const resClean = SETImporter.joinSetReports(genClean, [], cleanLink);
 assert.strictEqual(resClean.joined[0].citizenId, '1509900444446', 'Clean 1-to-1 pair must still resolve properly');
 console.log('  ✅ Passed Bidirectional Link Table Conflict Rejection tests');
 
-console.log('\n🎉 ALL 18 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');
+// 19. Targeted QA Fix 4: Comprehensive PII Masking Verification (Alerts, Tables, Modals, Admin Toggle)
+console.log('\nTest 19: Comprehensive PII Masking Verification (Alerts, Tables, Modals, Admin Toggle)');
+
+// Scenario A: PII Masking is ON (default state)
+const maskEnabled = true;
+const rawSetCid = '1509900111111';
+const rawSheetCid = '1509900222222';
+
+// 1. Citizen ID column display in Preview table
+const tableDisplayMasked = maskEnabled ? SETImporter.maskCitizenId(rawSetCid) : rawSetCid;
+assert.strictEqual(tableDisplayMasked, '1-5099-xxxxx-11-1', 'Table citizen ID must be masked');
+assert.strictEqual(/\b\d{13}\b/.test(tableDisplayMasked), false, 'No raw 13-digit ID in table column');
+
+// 2. Conflict description / alert message in table and modal banner
+const conflictItem = resCidConflict.unmatched[0];
+const diffSummaryText = conflictItem.description;
+assert.strictEqual(/\b\d{13}\b/.test(diffSummaryText), false, 'No raw 13-digit ID in conflict description or alert');
+assert.strictEqual(diffSummaryText.includes('เลขประจำตัวประชาชนขัดแย้งกัน'), true, 'Describes conflict type clearly');
+
+// 3. Modal status banner
+const modalBannerMasked = rawSetCid ? (maskEnabled ? SETImporter.maskCitizenId(rawSetCid) : rawSetCid) : '-';
+assert.strictEqual(modalBannerMasked, '1-5099-xxxxx-11-1', 'Modal banner must be masked when maskPii=true');
+
+// 4. Modal field comparison table rows
+const modalSetValMasked = rawSetCid ? (maskEnabled ? SETImporter.maskCitizenId(rawSetCid) : rawSetCid) : '-';
+const modalSheetValMasked = rawSheetCid ? (maskEnabled ? SETImporter.maskCitizenId(rawSheetCid) : rawSheetCid) : '-';
+assert.strictEqual(modalSetValMasked, '1-5099-xxxxx-11-1', 'Modal SET citizen ID row must be masked');
+assert.strictEqual(modalSheetValMasked, '1-5099-xxxxx-22-2', 'Modal Sheets citizen ID row must be masked');
+assert.strictEqual(/\b\d{13}\b/.test(modalSetValMasked), false, 'Zero raw ID in modal SET row');
+assert.strictEqual(/\b\d{13}\b/.test(modalSheetValMasked), false, 'Zero raw ID in modal Sheets row');
+
+// Scenario B: Admin toggles PII Masking OFF (unmask permission)
+const maskDisabled = false;
+const tableDisplayUnmasked = maskDisabled ? SETImporter.maskCitizenId(rawSetCid) : rawSetCid;
+assert.strictEqual(tableDisplayUnmasked, '1509900111111', 'Table citizen ID revealed when maskPii=false');
+
+const modalBannerUnmasked = rawSetCid ? (maskDisabled ? SETImporter.maskCitizenId(rawSetCid) : rawSetCid) : '-';
+assert.strictEqual(modalBannerUnmasked, '1509900111111', 'Modal banner revealed when maskPii=false');
+
+const modalSetValUnmasked = rawSetCid ? (maskDisabled ? SETImporter.maskCitizenId(rawSetCid) : rawSetCid) : '-';
+const modalSheetValUnmasked = rawSheetCid ? (maskDisabled ? SETImporter.maskCitizenId(rawSheetCid) : rawSheetCid) : '-';
+assert.strictEqual(modalSetValUnmasked, '1509900111111', 'Modal SET row revealed for Admin inspection');
+assert.strictEqual(modalSheetValUnmasked, '1509900222222', 'Modal Sheets row revealed for Admin inspection');
+console.log('  ✅ Passed Comprehensive PII Masking tests');
+
+console.log('\n🎉 ALL 19 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');

@@ -2896,7 +2896,7 @@ const google = {
       'invalid': '❌ ข้อมูลผิดปกติหรือไม่ถูกต้องตามรูปแบบ'
     };
 
-    const safeCitizenId = SETImporter.escapeHtml(setRec.citizenId ? SETImporter.maskCitizenId(setRec.citizenId) : '-');
+    const safeCitizenId = SETImporter.escapeHtml(setRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(setRec.citizenId) : setRec.citizenId) : '-');
     banner.attr('class', `p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold ${badgeColors[category] || 'bg-gray-50'}`);
     banner.html(`
       <span>${SETImporter.escapeHtml(statusLabels[category] || category)}</span>
