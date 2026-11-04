@@ -2585,10 +2585,12 @@ const google = {
         // Show warnings/errors if any
         displayValidationAlerts(reportType, validation);
 
-        // Check if we can enable Run Preview button (General report is required)
-        if (state.setImport.generalRows.length > 0 && state.setImport.generalMapping.fullName) {
-          $('#btnRunSetPreview').prop('disabled', false);
-        }
+        // Check if we can enable Run Preview button (supports both full name and separate first/last name)
+        const isGeneralValid = SETImporter.canEnablePreview({
+          detected: state.setImport.generalMapping,
+          errors: (reportType === 'general' ? validation.errors : [])
+        });
+        $('#btnRunSetPreview').prop('disabled', !isGeneralValid || state.setImport.generalRows.length === 0);
 
       } catch (err) {
         Swal.fire('ข้อผิดพลาดในการอ่านไฟล์', err.message, 'error');
@@ -2607,10 +2609,10 @@ const google = {
 
     let html = '';
     if (validation.errors.length) {
-      html += `<div class="text-xs text-red-700 font-bold flex items-center gap-1.5"><i data-lucide="alert-circle" class="w-4 h-4 text-red-600"></i> ข้อผิดพลาดคอลัมน์ (${reportType}): ${validation.errors.join(', ')}</div>`;
+      html += `<div class="text-xs text-red-700 font-bold flex items-center gap-1.5"><i data-lucide="alert-circle" class="w-4 h-4 text-red-600"></i> ข้อผิดพลาดคอลัมน์ (${reportType}): ${SETImporter.escapeHtml(validation.errors.join(', '))}</div>`;
     }
     if (validation.warnings.length) {
-      html += `<div class="text-xs text-amber-700 flex items-center gap-1.5"><i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i> คำแนะนำ (${reportType}): ${validation.warnings.join(', ')}</div>`;
+      html += `<div class="text-xs text-amber-700 flex items-center gap-1.5"><i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i> คำแนะนำ (${reportType}): ${SETImporter.escapeHtml(validation.warnings.join(', '))}</div>`;
     }
 
     alertBox.html(html).removeClass('hidden').addClass('bg-amber-500/10 border-amber-300');
@@ -2628,12 +2630,13 @@ const google = {
 
     setTimeout(() => {
       try {
-        // 1. Normalize Rows
+        // 1. Normalize Rows (including Report 3 link rows with Thai headers)
         const normalizedGen = state.setImport.generalRows.map(r => SETImporter.normalizeSetGeneralRow(r, state.setImport.generalMapping));
         const normalizedAddr = state.setImport.addressRows.map(r => SETImporter.normalizeSetAddressRow(r, state.setImport.addressMapping));
+        const normalizedLink = state.setImport.linkRows.map(r => SETImporter.normalizeSetLinkRow(r, state.setImport.linkMapping));
 
         // 2. Multi-report join
-        const joinResult = SETImporter.joinSetReports(normalizedGen, normalizedAddr, state.setImport.linkRows);
+        const joinResult = SETImporter.joinSetReports(normalizedGen, normalizedAddr, normalizedLink);
 
         // 3. Diff Comparison with Google Sheets
         const refDate = state.appConfig ? state.appConfig.reportDate : '';
@@ -2782,20 +2785,29 @@ const google = {
       const setRec = item.set || {};
       const sheetRec = item.sheet || {};
 
-      const studentId = setRec.studentId || '-';
-      const rawCid = setRec.citizenId || '-';
-      const citizenIdDisplay = state.setImport.maskPii ? SETImporter.maskCitizenId(rawCid) : rawCid;
+      const rawStudentId = setRec.studentId || '-';
+      const studentId = SETImporter.escapeHtml(rawStudentId);
 
-      const name = setRec.fullName || sheetRec.name || '-';
+      const rawCid = setRec.citizenId || '-';
+      const citizenIdDisplay = SETImporter.escapeHtml(state.setImport.maskPii ? SETImporter.maskCitizenId(rawCid) : rawCid);
+
+      const rawName = setRec.fullName || sheetRec.name || '-';
+      const name = SETImporter.escapeHtml(rawName);
+
       const dob = setRec.dob || sheetRec.dateOfBirth || '-';
       const age = setRec.age || sheetRec.age || '-';
-      const dobAge = dob !== '-' ? `${dob} (${age})` : '-';
+      const dobAge = SETImporter.escapeHtml(dob !== '-' ? `${dob} (${age})` : '-');
 
-      const disability = setRec.disabilityTypeSet || sheetRec.disabilityByCard || sheetRec.disabilityByScreening || '-';
-      const address = setRec.address || '-';
+      const rawDisability = setRec.disabilityTypeSet || sheetRec.disabilityByCard || sheetRec.disabilityByScreening || '-';
+      const disability = SETImporter.escapeHtml(rawDisability);
 
+      const rawAddress = setRec.address || '-';
+      const address = SETImporter.escapeHtml(rawAddress);
+
+      const safeCategory = SETImporter.escapeHtml(item.category);
+      const safeIndex = parseInt(item.categoryIndex, 10);
       const badgeCls = badgeStyles[item.category] || 'bg-gray-100 text-gray-700';
-      const statusLabel = statusLabels[item.category] || item.category;
+      const statusLabel = SETImporter.escapeHtml(statusLabels[item.category] || item.category);
 
       let confidenceBadge = '';
       if (item.matchConfidence === 'verified') {
@@ -2806,9 +2818,11 @@ const google = {
         confidenceBadge = `<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 ml-1" title="พบข้อมูลขัดแย้ง/ซ้ำซ้อน">รอตรวจสอบ</span>`;
       }
 
-      let diffSummary = item.description || '-';
+      let diffSummary = '';
       if (item.category === 'updated' && item.diffs) {
-        diffSummary = item.diffs.map(d => `<span class="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[11px] font-semibold mr-1 mb-1">${d.field}</span>`).join('');
+        diffSummary = item.diffs.map(d => `<span class="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[11px] font-semibold mr-1 mb-1">${SETImporter.escapeHtml(d.field)}</span>`).join('');
+      } else {
+        diffSummary = SETImporter.escapeHtml(item.description || '-');
       }
 
       const rowHtml = `
@@ -2828,7 +2842,7 @@ const google = {
           </td>
           <td class="px-3 py-3 text-xs text-gray-600 max-w-xs">${diffSummary}</td>
           <td class="px-3 py-3 text-center whitespace-nowrap">
-            <button type="button" class="btn-view-set-diff text-xs px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium transition" data-category="${item.category}" data-index="${item.categoryIndex}">
+            <button type="button" class="btn-view-set-diff text-xs px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-medium transition" data-category="${safeCategory}" data-index="${safeIndex}">
               ดูรายละเอียด
             </button>
           </td>
@@ -2882,10 +2896,11 @@ const google = {
       'invalid': '❌ ข้อมูลผิดปกติหรือไม่ถูกต้องตามรูปแบบ'
     };
 
+    const safeCitizenId = SETImporter.escapeHtml(setRec.citizenId ? SETImporter.maskCitizenId(setRec.citizenId) : '-');
     banner.attr('class', `p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold ${badgeColors[category] || 'bg-gray-50'}`);
     banner.html(`
-      <span>${statusLabels[category] || category}</span>
-      <span class="font-mono">${setRec.citizenId ? SETImporter.maskCitizenId(setRec.citizenId) : '-'}</span>
+      <span>${SETImporter.escapeHtml(statusLabels[category] || category)}</span>
+      <span class="font-mono">${safeCitizenId}</span>
     `);
 
     // Remove existing confidence alerts if any
@@ -2909,7 +2924,7 @@ const google = {
       confidenceHtml = `
         <div id="diffModalConfidenceAlert" class="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2">
           <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-700 shrink-0 mt-0.5"></i>
-          <div><b>ตรวจพบข้อมูลขัดแย้งหรือซ้ำซ้อน:</b> ${item.description} ระบบปฏิเสธการจับคู่อัตโนมัติเพื่อให้ผู้ดูแลระบบตรวจสอบตัวบุคคล</div>
+          <div><b>ตรวจพบข้อมูลขัดแย้งหรือซ้ำซ้อน:</b> ${SETImporter.escapeHtml(item.description)} ระบบปฏิเสธการจับคู่อัตโนมัติเพื่อให้ผู้ดูแลระบบตรวจสอบตัวบุคคล</div>
         </div>
       `;
     }
@@ -2917,7 +2932,7 @@ const google = {
       banner.after(confidenceHtml);
     }
 
-    // Compare fields
+    // Compare fields - cleanly separating independent disability sources
     const fields = [
       {
         name: 'รหัสนักเรียน',
@@ -2927,7 +2942,7 @@ const google = {
       {
         name: 'เลขประจำตัวประชาชน',
         setVal: setRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(setRec.citizenId) : setRec.citizenId) : '-',
-        sheetVal: '(ไม่มีในฐานข้อมูลชีตเดิม)'
+        sheetVal: sheetRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(sheetRec.citizenId) : sheetRec.citizenId) : '(ไม่มีในฐานข้อมูลชีตเดิม)'
       },
       {
         name: 'ชื่อ-นามสกุล',
@@ -2950,14 +2965,27 @@ const google = {
         sheetVal: '-'
       },
       {
-        name: 'ประเภทความพิการ',
+        name: 'ความพิการ (ระบบ SET)',
         setVal: setRec.disabilityTypeSet || '-',
-        sheetVal: sheetRec.disabilityByCard || sheetRec.disabilityByScreening || '-'
+        sheetVal: sheetRec.disabilityTypeSet || '(ไม่มีในชีตเดิม)',
+        isSeparateSource: !sheetRec.disabilityTypeSet
+      },
+      {
+        name: 'ความพิการ (บัตรคนพิการ)',
+        setVal: '(SET ไม่ได้ระบุ)',
+        sheetVal: sheetRec.disabilityByCard || '-',
+        isSeparateSource: true
+      },
+      {
+        name: 'ความพิการ (แบบคัดกรอง)',
+        setVal: '(SET ไม่ได้ระบุ)',
+        sheetVal: sheetRec.disabilityByScreening || '-',
+        isSeparateSource: true
       },
       {
         name: 'ที่อยู่ตามทะเบียนบ้าน',
         setVal: setRec.address || '-',
-        sheetVal: '(ไม่มีในชีตเดิม)'
+        sheetVal: sheetRec.address || '(ไม่มีในชีตเดิม)'
       },
       {
         name: 'ห้องเรียน/ครูผู้รับผิดชอบ',
@@ -2976,6 +3004,8 @@ const google = {
         statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-blue-100 text-blue-800 font-bold">ข้อมูลใหม่</span>';
       } else if (category === 'sheets_only') {
         statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-purple-100 text-purple-800 font-bold">เฉพาะชีตเดิม</span>';
+      } else if (f.isSeparateSource) {
+        statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-slate-100 text-slate-700 font-medium">แหล่งข้อมูลอิสระ</span>';
       } else if (f.setVal !== '-' && f.sheetVal !== '-' && !f.sheetVal.includes('ไม่มี') && f.setVal !== f.sheetVal) {
         statusTag = '<span class="px-2 py-0.5 rounded text-[11px] bg-amber-100 text-amber-800 font-bold">แตกต่าง</span>';
         rowBg = 'bg-amber-50/60 font-semibold';
@@ -2987,9 +3017,9 @@ const google = {
 
       tbody.append(`
         <tr class="${rowBg}">
-          <td class="px-4 py-2.5 font-semibold text-gray-800">${f.name}</td>
-          <td class="px-4 py-2.5 text-gray-700 bg-blue-50/30 font-mono">${f.setVal}</td>
-          <td class="px-4 py-2.5 text-gray-700 bg-emerald-50/30 font-mono">${f.sheetVal}</td>
+          <td class="px-4 py-2.5 font-semibold text-gray-800">${SETImporter.escapeHtml(f.name)}</td>
+          <td class="px-4 py-2.5 text-gray-700 bg-blue-50/30 font-mono">${SETImporter.escapeHtml(f.setVal)}</td>
+          <td class="px-4 py-2.5 text-gray-700 bg-emerald-50/30 font-mono">${SETImporter.escapeHtml(f.sheetVal)}</td>
           <td class="px-4 py-2.5 text-center">${statusTag}</td>
         </tr>
       `);

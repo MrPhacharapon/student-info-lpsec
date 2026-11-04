@@ -172,4 +172,153 @@ assert.strictEqual(resSetCollision.unmatched.length, 2, 'Both duplicate SET reco
 assert.strictEqual(resSetCollision.unmatched[0].conflictType, 'collision_set_duplicate');
 console.log('  ✅ Passed SET collision protection test');
 
-console.log('\n🎉 ALL 10 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');
+// 11. PR #1 Review Fix 1 & 2: HTML Injection / XSS Prevention & Safe Masking
+console.log('\nTest 11: HTML Injection / XSS Prevention & Safe Masking');
+const dangerousPayload = '<script>alert("xss")</script><img src="x" onerror="alert(1)">';
+const escaped = SETImporter.escapeHtml(dangerousPayload);
+assert.strictEqual(escaped.includes('<script>'), false, 'Must escape <script>');
+assert.strictEqual(escaped.includes('&lt;script&gt;'), true, 'Must convert < to &lt;');
+assert.strictEqual(escaped.includes('&quot;'), true, 'Must convert double quotes to &quot;');
+assert.strictEqual(SETImporter.escapeHtml("Tom & Jerry's"), 'Tom &amp; Jerry&#39;s', 'Must escape single quote and ampersand');
+assert.strictEqual(SETImporter.escapeHtml(null), '', 'Null must return empty string');
+assert.strictEqual(SETImporter.escapeHtml(undefined), '', 'Undefined must return empty string');
+assert.strictEqual(SETImporter.escapeHtml(12345), '12345', 'Numbers must be safely converted to string');
+
+const maskedStandard = SETImporter.maskCitizenId('1509900123456');
+assert.strictEqual(maskedStandard, '1-5099-xxxxx-45-6', 'Standard 13-digit ID masked correctly');
+const maskedMalformed = SETImporter.maskCitizenId('<script>bad_id');
+assert.strictEqual(maskedMalformed.includes('<script>'), false, 'Masking malformed string must sanitize output');
+assert.strictEqual(SETImporter.maskCitizenId(''), '-', 'Empty ID returns placeholder');
+console.log('  ✅ Passed HTML escaping and safe masking tests');
+
+// 12. PR #1 Review Fix 3: canEnablePreview condition
+console.log('\nTest 12: canEnablePreview condition (combined vs split names, required keys)');
+// Combined full name + studentId
+const validCombined = SETImporter.canEnablePreview({
+  detected: { fullName: 'ชื่อ-นามสกุล', studentId: 'เลขประจำตัวนักเรียน' },
+  errors: []
+});
+assert.strictEqual(validCombined, true, 'Combined full name with studentId must allow preview');
+
+// Split first + last name + citizenId
+const validSplit = SETImporter.canEnablePreview({
+  detected: { firstName: 'ชื่อ', lastName: 'นามสกุล', citizenId: 'เลขประจำตัวประชาชน' },
+  errors: []
+});
+assert.strictEqual(validSplit, true, 'Split first and last name with citizenId must allow preview');
+
+// Missing join key (has name but no studentId and no citizenId)
+const missingKey = SETImporter.canEnablePreview({
+  detected: { fullName: 'ชื่อ-นามสกุล' },
+  errors: []
+});
+assert.strictEqual(missingKey, false, 'Missing join key (studentId / citizenId) must not allow preview');
+
+// Missing lastName in split name mode
+const missingLastName = SETImporter.canEnablePreview({
+  detected: { firstName: 'ชื่อ', studentId: 'เลขประจำตัวนักเรียน' },
+  errors: []
+});
+assert.strictEqual(missingLastName, false, 'Missing last name in split mode must not allow preview');
+
+// Has validation errors
+const hasErrors = SETImporter.canEnablePreview({
+  detected: { fullName: 'ชื่อ-นามสกุล', studentId: 'เลขประจำตัวนักเรียน' },
+  errors: ['คอลัมน์ไม่ถูกต้อง']
+});
+assert.strictEqual(hasErrors, false, 'Must not allow preview when validation errors exist');
+assert.strictEqual(SETImporter.canEnablePreview(null), false, 'Null validation must return false');
+console.log('  ✅ Passed canEnablePreview condition tests');
+
+// 13. PR #1 Review Fix 4: Link Report Mapping & Conflict Protection
+console.log('\nTest 13: Link Report Mapping (Thai headers normalization & conflict purge)');
+// Thai headers normalization
+const rawThaiLink = { 'เลขประจำตัวนักเรียน': '69001', 'เลขประจำตัวประชาชน': '1509900123453' };
+const normalizedLinkRow = SETImporter.normalizeSetLinkRow(rawThaiLink);
+assert.strictEqual(normalizedLinkRow.studentId, '69001', 'Normalized studentId from Thai header');
+assert.strictEqual(normalizedLinkRow.citizenId, '1509900123453', 'Normalized citizenId from Thai header');
+
+// Multi-report join with Report 3 link file
+const genWithoutCid = [{
+  studentId: '69001',
+  fullName: 'เด็กชายสมหมาย มั่นใจ',
+  normalizedName: 'สมหมายมั่นใจ',
+  dob: '10/01/2562',
+  disabilityTypeSet: 'ออทิสติก'
+}];
+const addrWithCid = [{
+  citizenId: '1509900123453',
+  address: '99/1 หมู่ 5 ต.พระบาท อ.เมือง จ.ลำปาง 52000'
+}];
+const linkRows = [rawThaiLink];
+
+const joinResultWithLink = SETImporter.joinSetReports(genWithoutCid, addrWithCid, linkRows);
+assert.strictEqual(joinResultWithLink.joined.length, 1, 'Should successfully join 1 row');
+assert.strictEqual(joinResultWithLink.joined[0].citizenId, '1509900123453', 'Enriched citizenId from Report 3');
+assert.strictEqual(joinResultWithLink.joined[0].address, '99/1 หมู่ 5 ต.พระบาท อ.เมือง จ.ลำปาง 52000', 'Enriched address via citizenId from Report 3');
+
+// Conflicting link mappings must be purged
+const conflictingLinks = [
+  { 'เลขประจำตัวนักเรียน': '69099', 'เลขประจำตัวประชาชน': '1509900111111' },
+  { 'เลขประจำตัวนักเรียน': '69099', 'เลขประจำตัวประชาชน': '1509900222222' } // Conflicting citizenId for same studentId!
+];
+const genConflict = [{
+  studentId: '69099',
+  fullName: 'เด็กชายนิรนาม ขัดแย้ง',
+  normalizedName: 'นิรนามขัดแย้ง',
+  dob: '05/05/2562'
+}];
+const joinConflictResult = SETImporter.joinSetReports(genConflict, [], conflictingLinks);
+assert.strictEqual(joinConflictResult.joined[0].citizenId, '', 'Conflicting link must be purged and not falsely assigned');
+console.log('  ✅ Passed Link report mapping and conflict protection tests');
+
+// 14. PR #1 Review Fix 5: Disability Multi-Source Separation
+console.log('\nTest 14: Disability Multi-Source Separation (SET vs Card vs Screening)');
+// Scenario 1: Sheets does NOT track disabilityTypeSet -> differing disability must NOT flag updatedDiff!
+const sheetsIndependentDis = [{
+  rowNumber: 15,
+  name: 'เด็กชายก้องภพ เรียนดี',
+  dateOfBirth: '10/10/2562',
+  disabilityByCard: 'ออทิสติก',
+  disabilityByScreening: 'บกพร่องทางการเรียนรู้'
+}];
+const setIndependentDis = [{
+  citizenId: '1509900666661',
+  fullName: 'เด็กชายก้องภพ เรียนดี',
+  normalizedName: 'ก้องภพเรียนดี',
+  dob: '10/10/2562',
+  disabilityTypeSet: 'บกพร่องทางสติปัญญา' // Different from Card & Screening
+}];
+const resIndependent = SETImporter.compareWithGoogleSheets(setIndependentDis, sheetsIndependentDis);
+assert.strictEqual(resIndependent.matched.length, 1, 'Should match student');
+assert.strictEqual(resIndependent.updatedDiff.length, 0, 'Must NOT trigger updatedDiff when SET differs only from Card/Screening');
+assert.deepStrictEqual(resIndependent.matched[0].set.disabilityComparison, {
+  setDisability: 'บกพร่องทางสติปัญญา',
+  cardDisability: 'ออทิสติก',
+  screeningDisability: 'บกพร่องทางการเรียนรู้'
+}, 'Multi-source disability context must be preserved for Admin view');
+
+// Scenario 2: Sheets DOES explicitly track disabilityTypeSet and it changed -> MUST flag updatedDiff!
+const sheetsWithSetCol = [{
+  rowNumber: 16,
+  name: 'เด็กชายก้องภพ เรียนดี',
+  dateOfBirth: '10/10/2562',
+  disabilityTypeSet: 'บกพร่องทางการได้ยิน', // Old SET disability in Sheets
+  disabilityByCard: 'ออทิสติก'
+}];
+const resWithSetCol = SETImporter.compareWithGoogleSheets(setIndependentDis, sheetsWithSetCol);
+assert.strictEqual(resWithSetCol.updatedDiff.length, 1, 'Must flag updatedDiff when Sheets tracks disabilityTypeSet and it changed');
+assert.strictEqual(resWithSetCol.updatedDiff[0].diffs[0].fieldKey, 'disabilityTypeSet');
+assert.strictEqual(resWithSetCol.updatedDiff[0].diffs[0].setVal, 'บกพร่องทางสติปัญญา');
+assert.strictEqual(resWithSetCol.updatedDiff[0].diffs[0].sheetVal, 'บกพร่องทางการได้ยิน');
+console.log('  ✅ Passed Disability multi-source separation tests');
+
+// 15. PR #1 Review Fix 1: SheetJS Version in index.html verification
+console.log('\nTest 15: SheetJS Version Verification in index.html');
+const fs = require('fs');
+const indexHtml = fs.readFileSync('./index.html', 'utf8');
+assert.strictEqual(indexHtml.includes('xlsx@0.18.5'), false, 'index.html must NOT contain vulnerable xlsx@0.18.5');
+assert.strictEqual(indexHtml.includes('xlsx-0.20.3'), true, 'index.html must reference official SheetJS 0.20.3');
+console.log('  ✅ Passed SheetJS version check');
+
+console.log('\n🎉 ALL 15 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');

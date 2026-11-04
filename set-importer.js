@@ -116,13 +116,39 @@
   }
 
   /**
+   * Escape HTML special characters to prevent HTML Injection and XSS
+   */
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return str.toString()
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /**
    * Mask Citizen ID for privacy protection:
    * e.g. 1234567890123 -> 1-2345-xxxxx-23-4
+   * Handles 13-digit Thai IDs, G-codes, and safely sanitizes malformed values without leaking raw HTML/XSS
    */
   function maskCitizenId(idStr) {
+    if (idStr === undefined || idStr === null || idStr === '') return '-';
     const clean = cleanCitizenId(idStr);
-    if (!clean || clean.length !== 13) return idStr || '-';
-    return `${clean.substr(0, 1)}-${clean.substr(1, 4)}-xxxxx-${clean.substr(10, 2)}-${clean.substr(12, 1)}`;
+    if (clean && clean.length === 13 && /^\d{13}$/.test(clean)) {
+      return `${clean.substr(0, 1)}-${clean.substr(1, 4)}-xxxxx-${clean.substr(10, 2)}-${clean.substr(12, 1)}`;
+    }
+    // G-code support e.g. G123456789012
+    if (/^[Gg]\d{12}$/.test(clean)) {
+      return `${clean.substr(0, 3)}-xxxxx-${clean.substr(11, 2)}`;
+    }
+    // Malformed numeric string with some digits
+    if (/^\d+$/.test(clean) && clean.length > 4) {
+      return `${clean.substr(0, 2)}***${clean.substr(clean.length - 2)}`;
+    }
+    // Malformed or non-numeric string: return safe label
+    return '(รูปแบบไม่ถูกต้อง)';
   }
 
   /**
@@ -349,6 +375,22 @@
   }
 
   /**
+   * Determine if Preview button can be enabled:
+   * Requires:
+   * 1. Join key (citizenId or studentId)
+   * 2. Student name: either combined 'fullName' OR separate 'firstName' and 'lastName'
+   * 3. No fatal header validation errors
+   */
+  function canEnablePreview(validation) {
+    if (!validation) return false;
+    const detected = validation.detected || validation;
+    const hasKey = !!(detected.citizenId || detected.studentId);
+    const hasName = !!(detected.fullName || (detected.firstName && detected.lastName));
+    const hasNoFatalErrors = !validation.errors || validation.errors.length === 0;
+    return hasKey && hasName && hasNoFatalErrors;
+  }
+
+  /**
    * Parse rows from Excel raw sheet data
    */
   function extractRowsFromSheet(sheet) {
@@ -444,6 +486,22 @@
   }
 
   /**
+   * Normalize an extracted SET Link table row (Report 3)
+   * Resolves Thai headers like 'เลขประจำตัวนักเรียน' and 'เลขประจำตัวประชาชน'
+   */
+  function normalizeSetLinkRow(row, mapping = {}) {
+    if (!row) return { citizenId: '', studentId: '', rawRow: row };
+    const m = (mapping && Object.keys(mapping).length > 0) ? mapping : detectColumns(Object.keys(row));
+    const citizenId = cleanCitizenId(m.citizenId ? row[m.citizenId] : (row.citizenId || ''));
+    const studentId = cleanStudentId(m.studentId ? row[m.studentId] : (row.studentId || ''));
+    return {
+      citizenId,
+      studentId,
+      rawRow: row
+    };
+  }
+
+  /**
    * Join multiple SET reports on verified keys (Citizen ID / Student ID)
    */
   function joinSetReports(generalRows, addressRows = [], linkRows = []) {
@@ -459,14 +517,44 @@
       if (addr.studentId) addressByStudentId.set(addr.studentId, addr);
     }
 
-    // Map link by studentId -> citizenId or vice versa
+    // Map link by studentId -> citizenId or vice versa (with Thai header normalization and conflict detection)
     const linkByStudentId = new Map();
     const linkByCitizenId = new Map();
-    for (const link of linkRows) {
-      if (link.studentId && link.citizenId) {
-        linkByStudentId.set(link.studentId, link.citizenId);
-        linkByCitizenId.set(link.citizenId, link.studentId);
+    const conflictingStudentIds = new Set();
+    const conflictingCitizenIds = new Set();
+
+    for (const rawLink of linkRows) {
+      // Support both pre-normalized objects and raw Thai-header Excel rows
+      const link = (rawLink.studentId !== undefined && rawLink.citizenId !== undefined && !rawLink['เลขประจำตัวนักเรียน']) 
+        ? rawLink 
+        : normalizeSetLinkRow(rawLink);
+
+      const sid = cleanStudentId(link.studentId);
+      const cid = cleanCitizenId(link.citizenId);
+
+      if (sid && cid) {
+        // Detect conflict: same studentId mapped to multiple distinct citizenIds
+        if (linkByStudentId.has(sid) && linkByStudentId.get(sid) !== cid) {
+          conflictingStudentIds.add(sid);
+        } else {
+          linkByStudentId.set(sid, cid);
+        }
+
+        // Detect conflict: same citizenId mapped to multiple distinct studentIds
+        if (linkByCitizenId.has(cid) && linkByCitizenId.get(cid) !== sid) {
+          conflictingCitizenIds.add(cid);
+        } else {
+          linkByCitizenId.set(cid, sid);
+        }
       }
+    }
+
+    // Purge conflicting keys so they are NEVER used to falsely mismatch students!
+    for (const sid of conflictingStudentIds) {
+      linkByStudentId.delete(sid);
+    }
+    for (const cid of conflictingCitizenIds) {
+      linkByCitizenId.delete(cid);
     }
 
     const seenCitizenIds = new Set();
@@ -524,7 +612,7 @@
         age: gen.age,
         gender: gen.gender,
         disabilityTypeSet: gen.disabilityTypeSet,
-        address: matchedAddr ? matchedAddr.fullAddress : '',
+        address: matchedAddr ? (matchedAddr.fullAddress || matchedAddr.address || '') : '',
         subdistrict: matchedAddr ? matchedAddr.subdistrict : '',
         district: matchedAddr ? matchedAddr.district : '',
         province: matchedAddr ? matchedAddr.province : '',
@@ -775,19 +863,28 @@
           });
         }
 
-        // Disability comparison (SET disability vs Card / Screening)
-        if (setRec.disabilityTypeSet) {
-          const sheetCardDis = sheetStudent.disabilityByCard || '';
-          const sheetScreenDis = sheetStudent.disabilityByScreening || '';
-          if (!sheetCardDis.includes(setRec.disabilityTypeSet) && !sheetScreenDis.includes(setRec.disabilityTypeSet)) {
-            diffs.push({
-              field: 'ประเภทความพิการ (SET)',
-              fieldKey: 'disabilityTypeSet',
-              setVal: setRec.disabilityTypeSet,
-              sheetVal: sheetCardDis || sheetScreenDis || 'ไม่ระบุ'
-            });
-          }
+        // Separate Disability Data Sources (SET, Card, Screening are independent dimensions):
+        // SET Disability is NOT a mutation of Card or Screening disability.
+        // We preserve all sources and only flag an update if Google Sheets specifically tracks disabilityTypeSet and it changed.
+        const sheetCardDis = sheetStudent.disabilityByCard || '';
+        const sheetScreenDis = sheetStudent.disabilityByScreening || '';
+        const sheetSetDis = sheetStudent.disabilityTypeSet || '';
+
+        if (sheetSetDis && setRec.disabilityTypeSet && sheetSetDis.trim() !== setRec.disabilityTypeSet.trim()) {
+          diffs.push({
+            field: 'ประเภทความพิการตามระบบ SET',
+            fieldKey: 'disabilityTypeSet',
+            setVal: setRec.disabilityTypeSet,
+            sheetVal: sheetSetDis
+          });
         }
+
+        // Attach multi-source disability context for Admin comparison without triggering false 'updatedDiff'
+        setRec.disabilityComparison = {
+          setDisability: setRec.disabilityTypeSet || 'ไม่ระบุ',
+          cardDisability: sheetCardDis || 'ไม่ระบุ',
+          screeningDisability: sheetScreenDis || 'ไม่ระบุ'
+        };
 
         // Address comparison (only compare if Google Sheets has address column)
         if (sheetStudent.address && setRec.address && sheetStudent.address.trim() !== setRec.address.trim()) {
@@ -890,7 +987,7 @@
         'คำนำหน้า': 'เด็กหญิง',
         'ชื่อ': 'วิไล',
         'นามสกุล': 'ข้อมูลเปลี่ยน',
-        'วันเดือนปีเกิด': '01/05/2563', // Same DOB to demonstrate predicted match with field diff
+        'วันเดือนปีเกิด': '01/05/2563', // Same DOB
         'เพศ': 'หญิง',
         'ประเภทความพิการ': 'ออทิสติก'
       },
@@ -958,8 +1055,9 @@
         dateOfBirth: '01/05/2563',
         classroom: 'สงวนจันทร์',
         teacher: 'ครูทดสอบ สอง',
-        disabilityByCard: 'บกพร่องทางการเรียนรู้', // Differs from SET (ออทิสติก)
-        disabilityByScreening: 'บกพร่องทางการเรียนรู้'
+        disabilityTypeSet: 'บกพร่องทางการได้ยิน', // Tracks previous SET disability in sheets (now updated to ออทิสติก)
+        disabilityByCard: 'บกพร่องทางการเรียนรู้', // Independent Card disability
+        disabilityByScreening: 'บกพร่องทางการเรียนรู้' // Independent Screening disability
       },
       {
         rowNumber: 5,
@@ -989,6 +1087,8 @@
   }
 
   return {
+    escapeHtml,
+    canEnablePreview,
     normalizeThaiName,
     cleanCitizenId,
     isValidCitizenId,
@@ -1001,6 +1101,7 @@
     extractRowsFromSheet,
     normalizeSetGeneralRow,
     normalizeSetAddressRow,
+    normalizeSetLinkRow,
     joinSetReports,
     compareWithGoogleSheets,
     generateMockTestDataset,
