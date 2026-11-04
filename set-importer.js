@@ -440,14 +440,54 @@
   }
 
   /**
-   * Parse rows from Excel raw sheet data
+   * Scan and locate the 0-indexed row number of the actual table header.
+   * Handles sheets where the header is on row 0, as well as sheets with
+   * title banners / empty lines spanning rows 0 to N.
+   */
+  function findHeaderRowIndex(rows2D) {
+    if (!rows2D || !rows2D.length) return -1;
+    const maxScan = Math.min(20, rows2D.length);
+    for (let r = 0; r < maxScan; r++) {
+      const row = rows2D[r];
+      if (!row || !Array.isArray(row)) continue;
+      const nonEmpties = row.map(c => String(c || '').trim()).filter(Boolean);
+      if (nonEmpties.length < 2) continue; // Skip single-cell title banners or empty rows
+
+      const detected = detectColumns(nonEmpties);
+      const detectedCount = Object.keys(detected).length;
+
+      const commonHeaders = ['ลำดับ', 'ระดับชั้น', 'ห้อง', 'คำนำหน้า', 'no', 'order'];
+      const hasCommon = nonEmpties.some(c => commonHeaders.some(k => c.toLowerCase().includes(k)));
+
+      // Header row must have at least one recognized column and either another column or common table header
+      if (detectedCount >= 2 || (detectedCount >= 1 && (hasCommon || nonEmpties.length >= 3))) {
+        return r;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Parse rows from Excel raw sheet data.
+   * Automatically detects the header row even when preceded by title banners.
    */
   function extractRowsFromSheet(sheet) {
     if (typeof XLSX === 'undefined') {
       throw new Error('ไม่พบไลบรารี SheetJS (XLSX) กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
     }
-    // Read raw data retaining cell texts as formatted strings (to preserve leading zeros)
-    const json = XLSX.utils.sheet_to_json(sheet, { raw: false, defval: '' });
+    // 1. Read sheet as 2D array of rows to find true header row
+    const rows2D = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+    if (!rows2D || rows2D.length === 0) {
+      return [];
+    }
+
+    const headerIndex = findHeaderRowIndex(rows2D);
+    if (headerIndex === -1) {
+      throw new Error('ไม่พบแถวหัวตารางที่ถูกต้องในไฟล์ Excel ที่เลือก (กรุณาตรวจสอบว่ามีคอลัมน์สำคัญ เช่น เลขประจำตัวประชาชน เลขประจำตัวนักเรียน หรือชื่อ-นามสกุล)');
+    }
+
+    // 2. Read raw data retaining cell texts as formatted strings starting from detected header row
+    const json = XLSX.utils.sheet_to_json(sheet, { range: headerIndex, raw: false, defval: '' });
     return json;
   }
 
@@ -1249,6 +1289,7 @@
     calculateAgeExact,
     detectColumns,
     validateReportHeaders,
+    findHeaderRowIndex,
     extractRowsFromSheet,
     normalizeSetGeneralRow,
     normalizeSetAddressRow,
