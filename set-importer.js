@@ -303,13 +303,40 @@
   /**
    * Find column index/key by matching known aliases
    */
-  function findColumnKey(headers, fieldAliases) {
+  /**
+   * Find column index/key by matching known aliases
+   * Uses two-pass matching (exact match first, then substring) with negative exclusions
+   * to avoid mapping citizen ID columns as student ID when no student ID column exists.
+   */
+  function findColumnKey(headers, fieldAliases, excludeKeywords = []) {
     if (!headers || !headers.length) return null;
     const cleanHeaders = headers.map(h => h ? h.toString().trim().toLowerCase().replace(/[\s_\-]/g, '') : '');
+    const cleanExcludes = excludeKeywords.map(e => e.toLowerCase().replace(/[\s_\-]/g, ''));
     
+    // Pass 1: Exact match (ignoring whitespace and delimiters)
     for (const alias of fieldAliases) {
       const cleanAlias = alias.toLowerCase().replace(/[\s_\-]/g, '');
-      const idx = cleanHeaders.findIndex(h => h === cleanAlias || h.includes(cleanAlias));
+      const idx = cleanHeaders.findIndex(h => {
+        if (!h) return false;
+        if (cleanExcludes.some(ex => h.includes(ex))) return false;
+        return h === cleanAlias;
+      });
+      if (idx !== -1) {
+        return headers[idx];
+      }
+    }
+
+    // Pass 2: Substring match (with exclusions and safeguards against generic terms)
+    for (const alias of fieldAliases) {
+      const cleanAlias = alias.toLowerCase().replace(/[\s_\-]/g, '');
+      // Do not allow generic short/ambiguous aliases like 'code' or 'เลขประจำตัว' to loosely match via includes
+      if (cleanAlias === 'code' || cleanAlias === 'เลขประจำตัว') continue;
+
+      const idx = cleanHeaders.findIndex(h => {
+        if (!h) return false;
+        if (cleanExcludes.some(ex => h.includes(ex))) return false;
+        return h.includes(cleanAlias);
+      });
       if (idx !== -1) {
         return headers[idx];
       }
@@ -319,10 +346,32 @@
 
   /**
    * Inspect and detect column mappings from file headers
+   * Enforces strict separation between Citizen ID and Student ID columns
    */
   function detectColumns(headers) {
     const mapping = {};
+
+    // Specific exclusion lists to prevent cross-contamination
+    const fieldExcludes = {
+      studentId: ['ประชาชน', 'citizen', 'idcard', 'id_card', 'บัตรประชาชน', 'ผู้เสียภาษี'],
+      citizenId: ['นักเรียน', 'student']
+    };
+
+    // 1. Detect citizenId first
+    const cidFound = findColumnKey(headers, COLUMN_ALIASES.citizenId, fieldExcludes.citizenId);
+    if (cidFound) {
+      mapping.citizenId = cidFound;
+    }
+
+    // 2. Detect studentId (ensuring it never re-maps citizenId column)
+    const sidFound = findColumnKey(headers, COLUMN_ALIASES.studentId, fieldExcludes.studentId);
+    if (sidFound && sidFound !== mapping.citizenId) {
+      mapping.studentId = sidFound;
+    }
+
+    // 3. Detect other fields
     for (const [key, aliases] of Object.entries(COLUMN_ALIASES)) {
+      if (key === 'citizenId' || key === 'studentId') continue;
       const found = findColumnKey(headers, aliases);
       if (found) {
         mapping[key] = found;
@@ -517,11 +566,12 @@
       if (addr.studentId) addressByStudentId.set(addr.studentId, addr);
     }
 
-    // Map link by studentId -> citizenId or vice versa (with Thai header normalization and conflict detection)
-    const linkByStudentId = new Map();
-    const linkByCitizenId = new Map();
-    const conflictingStudentIds = new Set();
-    const conflictingCitizenIds = new Set();
+    // Map link by studentId -> citizenId or vice versa (with Thai header normalization and bidirectional conflict rejection)
+    // In a valid link table, studentId and citizenId must maintain a strict 1-to-1 bijection.
+    // If a studentId maps to multiple citizenIds OR a citizenId maps to multiple studentIds,
+    // the conflicting relationship must be rejected in BOTH directions.
+    const cidsBySid = new Map();
+    const sidsByCid = new Map();
 
     for (const rawLink of linkRows) {
       // Support both pre-normalized objects and raw Thai-header Excel rows
@@ -533,28 +583,58 @@
       const cid = cleanCitizenId(link.citizenId);
 
       if (sid && cid) {
-        // Detect conflict: same studentId mapped to multiple distinct citizenIds
-        if (linkByStudentId.has(sid) && linkByStudentId.get(sid) !== cid) {
-          conflictingStudentIds.add(sid);
-        } else {
-          linkByStudentId.set(sid, cid);
-        }
+        if (!cidsBySid.has(sid)) cidsBySid.set(sid, new Set());
+        cidsBySid.get(sid).add(cid);
 
-        // Detect conflict: same citizenId mapped to multiple distinct studentIds
-        if (linkByCitizenId.has(cid) && linkByCitizenId.get(cid) !== sid) {
-          conflictingCitizenIds.add(cid);
-        } else {
-          linkByCitizenId.set(cid, sid);
+        if (!sidsByCid.has(cid)) sidsByCid.set(cid, new Set());
+        sidsByCid.get(cid).add(sid);
+      }
+    }
+
+    // Collect all contaminated/conflicting IDs in both directions
+    const invalidSids = new Set();
+    const invalidCids = new Set();
+
+    // 1. Any studentId mapped to > 1 citizenId is a conflict; all associated citizenIds are also invalidated
+    for (const [sid, cids] of cidsBySid.entries()) {
+      if (cids.size > 1) {
+        invalidSids.add(sid);
+        for (const cid of cids) {
+          invalidCids.add(cid);
         }
       }
     }
 
-    // Purge conflicting keys so they are NEVER used to falsely mismatch students!
-    for (const sid of conflictingStudentIds) {
-      linkByStudentId.delete(sid);
+    // 2. Any citizenId mapped to > 1 studentId is a conflict; all associated studentIds are also invalidated
+    for (const [cid, sids] of sidsByCid.entries()) {
+      if (sids.size > 1) {
+        invalidCids.add(cid);
+        for (const sid of sids) {
+          invalidSids.add(sid);
+        }
+      }
     }
-    for (const cid of conflictingCitizenIds) {
-      linkByCitizenId.delete(cid);
+
+    // Build clean 1-to-1 lookup maps only for uncompromised pairs
+    const linkByStudentId = new Map();
+    const linkByCitizenId = new Map();
+
+    for (const [sid, cids] of cidsBySid.entries()) {
+      if (!invalidSids.has(sid) && cids.size === 1) {
+        const cid = Array.from(cids)[0];
+        if (!invalidCids.has(cid)) {
+          linkByStudentId.set(sid, cid);
+        }
+      }
+    }
+
+    for (const [cid, sids] of sidsByCid.entries()) {
+      if (!invalidCids.has(cid) && sids.size === 1) {
+        const sid = Array.from(sids)[0];
+        if (!invalidSids.has(sid)) {
+          linkByCitizenId.set(cid, sid);
+        }
+      }
     }
 
     const seenCitizenIds = new Set();
@@ -762,6 +842,41 @@
         matchConfidenceLabel = 'การจับคู่ที่ยืนยันแล้ว (รหัสนักเรียนตรงกัน)';
       }
 
+      // Check for Identifier Conflict in Path A:
+      // If matched by one ID, verify that the other ID (if present on both sides) does not conflict.
+      if (matchedSheetWrapper) {
+        const sheetStudent = matchedSheetWrapper.original;
+        const sheetCid = cleanCitizenId(sheetStudent.citizenId);
+        const sheetSid = cleanStudentId(sheetStudent.studentId);
+        const setCid = cleanCitizenId(setRec.citizenId);
+        const setSid = cleanStudentId(setRec.studentId);
+
+        let idConflictMsg = '';
+        if (setCid && sheetCid && setCid !== sheetCid) {
+          idConflictMsg = `เลขประจำตัวประชาชนขัดแย้งกัน (SET: ${setCid}, ชีตเดิม: ${sheetCid})`;
+        } else if (setSid && sheetSid && setSid !== sheetSid) {
+          idConflictMsg = `เลขประจำตัวนักเรียนขัดแย้งกัน (SET: ${setSid}, ชีตเดิม: ${sheetSid})`;
+        }
+
+        if (idConflictMsg) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'identifier_conflict',
+            description: `พบ${idConflictMsg} (ห้ามจับคู่อัตโนมัติ รอ Admin ตรวจสอบ)`,
+            conflictCandidate: {
+              name: sheetStudent.name,
+              dob: matchedSheetWrapper.dob,
+              citizenId: sheetCid,
+              studentId: sheetSid,
+              rowNumber: sheetStudent.rowNumber
+            }
+          });
+          continue;
+        }
+      }
+
       // Path B: If no verified unique ID match, use Compound Key (Normalized Name + DOB)
       if (!matchedSheetWrapper) {
         // Check for collision within SET (Duplicate student in SET export)
@@ -799,6 +914,40 @@
               status: 'unmatched',
               conflictType: 'collision_already_matched',
               description: 'พบการจับคู่ซ้ำซ้อนกับนักเรียนในชีตเดิมที่ถูกจับคู่ไปแล้ว (รอ Admin ตรวจสอบ)'
+            });
+            continue;
+          }
+
+          // Check for Identifier Conflict before accepting Compound Key match:
+          // Requirement: หาก SET และ Google Sheets มีเลขประจำตัวชนิดเดียวกันแต่ค่าขัดแย้งกัน
+          // ห้ามจับคู่ด้วยชื่อ+วันเกิดแทนโดยอัตโนมัติ ให้จัดเป็นรายการขัดแย้งรอ Admin ตรวจสอบ
+          const sheetStudent = candidate.original;
+          const sheetCid = cleanCitizenId(sheetStudent.citizenId);
+          const sheetSid = cleanStudentId(sheetStudent.studentId);
+          const setCid = cleanCitizenId(setRec.citizenId);
+          const setSid = cleanStudentId(setRec.studentId);
+
+          let idConflictMsg = '';
+          if (setCid && sheetCid && setCid !== sheetCid) {
+            idConflictMsg = `เลขประจำตัวประชาชนขัดแย้งกัน (SET: ${setCid}, ชีตเดิม: ${sheetCid})`;
+          } else if (setSid && sheetSid && setSid !== sheetSid) {
+            idConflictMsg = `เลขประจำตัวนักเรียนขัดแย้งกัน (SET: ${setSid}, ชีตเดิม: ${sheetSid})`;
+          }
+
+          if (idConflictMsg) {
+            conflictCount++;
+            unmatched.push({
+              set: setRec,
+              status: 'unmatched',
+              conflictType: 'identifier_conflict',
+              description: `ชื่อและวันเกิดตรงกันแต่พบ${idConflictMsg} (ห้ามจับคู่อัตโนมัติ รอ Admin ตรวจสอบ)`,
+              conflictCandidate: {
+                name: sheetStudent.name,
+                dob: candidate.dob,
+                citizenId: sheetCid,
+                studentId: sheetSid,
+                rowNumber: sheetStudent.rowNumber
+              }
             });
             continue;
           }

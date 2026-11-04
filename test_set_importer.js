@@ -321,4 +321,174 @@ assert.strictEqual(indexHtml.includes('xlsx@0.18.5'), false, 'index.html must NO
 assert.strictEqual(indexHtml.includes('xlsx-0.20.3'), true, 'index.html must reference official SheetJS 0.20.3');
 console.log('  ✅ Passed SheetJS version check');
 
-console.log('\n🎉 ALL 15 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');
+// 16. Targeted QA Fix 1: Column Alias Mapping Protection (No False Student ID Detection)
+console.log('\nTest 16: Column Alias Mapping Protection (Do NOT detect Citizen ID as Student ID)');
+const headersOnlyCid = ['เลขประจำตัวประชาชน', 'ชื่อ-นามสกุล', 'วันเดือนปีเกิด'];
+const mappingOnlyCid = SETImporter.detectColumns(headersOnlyCid);
+assert.strictEqual(mappingOnlyCid.citizenId, 'เลขประจำตัวประชาชน', 'Citizen ID must be detected');
+assert.strictEqual(mappingOnlyCid.studentId, undefined, 'Student ID must NOT be falsely detected as citizen ID column');
+
+const headersCidLearner = ['เลขประจำตัวประชาชนผู้เรียน', 'ชื่อ', 'นามสกุล'];
+const mappingCidLearner = SETImporter.detectColumns(headersCidLearner);
+assert.strictEqual(mappingCidLearner.citizenId, 'เลขประจำตัวประชาชนผู้เรียน', 'Citizen ID learner must be detected');
+assert.strictEqual(mappingCidLearner.studentId, undefined, 'Student ID must NOT match citizen ID learner');
+
+const headersBoth = ['เลขประจำตัวนักเรียน', 'เลขประจำตัวประชาชน', 'ชื่อ'];
+const mappingBoth = SETImporter.detectColumns(headersBoth);
+assert.strictEqual(mappingBoth.citizenId, 'เลขประจำตัวประชาชน', 'Citizen ID detected in dual-column file');
+assert.strictEqual(mappingBoth.studentId, 'เลขประจำตัวนักเรียน', 'Student ID detected in dual-column file');
+
+const headersExactStd = ['เลขประจำตัว', 'ชื่อ-นามสกุล'];
+const mappingExactStd = SETImporter.detectColumns(headersExactStd);
+assert.strictEqual(mappingExactStd.studentId, 'เลขประจำตัว', 'Exact student code header detected');
+assert.strictEqual(mappingExactStd.citizenId, undefined, 'Citizen ID must not be matched on exact student code');
+console.log('  ✅ Passed Column Alias Mapping Protection tests');
+
+// 17. Targeted QA Fix 2: Identifier Conflict Protection (DO NOT auto-match by Name + DOB when IDs conflict)
+console.log('\nTest 17: Identifier Conflict Protection (Prevent Auto-Match on Same Name/DOB with Conflicting ID)');
+// Case 17.1: Citizen ID Conflict despite identical Name + DOB
+const setDuangKamol = [{
+  citizenId: '1509900111111',
+  fullName: 'เด็กหญิงดวงกมล สดใส',
+  normalizedName: 'ดวงกมลสดใส',
+  dob: '12/04/2560'
+}];
+const sheetsDuangKamolConflict = [{
+  rowNumber: 40,
+  name: 'เด็กหญิงดวงกมล สดใส',
+  dateOfBirth: '12/04/2560',
+  citizenId: '1509900222222' // Conflicting Citizen ID!
+}];
+const resCidConflict = SETImporter.compareWithGoogleSheets(setDuangKamol, sheetsDuangKamolConflict);
+assert.strictEqual(resCidConflict.matched.length, 0, 'Must NOT match when Citizen IDs conflict despite same Name and DOB');
+assert.strictEqual(resCidConflict.updatedDiff.length, 0, 'Must NOT classify conflicting ID as updatedDiff');
+assert.strictEqual(resCidConflict.unmatched.length, 1, 'Must flag as unmatched for Admin review');
+assert.strictEqual(resCidConflict.unmatched[0].conflictType, 'identifier_conflict', 'Must set conflictType to identifier_conflict');
+assert.strictEqual(resCidConflict.summary.conflictCount, 1, 'Conflict count must increment');
+
+// Case 17.2: Student ID Conflict despite identical Name + DOB
+const setAnan = [{
+  studentId: '69001',
+  fullName: 'เด็กชายอนันต์ ตั้งใจ',
+  normalizedName: 'อนันต์ตั้งใจ',
+  dob: '15/08/2561'
+}];
+const sheetsAnanConflict = [{
+  rowNumber: 41,
+  name: 'เด็กชายอนันต์ ตั้งใจ',
+  dateOfBirth: '15/08/2561',
+  studentId: '69002' // Conflicting Student ID!
+}];
+const resSidConflict = SETImporter.compareWithGoogleSheets(setAnan, sheetsAnanConflict);
+assert.strictEqual(resSidConflict.matched.length, 0, 'Must NOT match when Student IDs conflict despite same Name and DOB');
+assert.strictEqual(resSidConflict.unmatched.length, 1, 'Must flag Student ID conflict for Admin review');
+assert.strictEqual(resSidConflict.unmatched[0].conflictType, 'identifier_conflict');
+
+// Case 17.3: Path A Match but Opposite ID Conflicts
+const setOppositeConflict = [{
+  studentId: '69001',
+  citizenId: '1509900111111',
+  fullName: 'เด็กชายสมหมาย มั่นคง',
+  normalizedName: 'สมหมายมั่นคง',
+  dob: '20/09/2560'
+}];
+const sheetsOppositeConflict = [{
+  rowNumber: 42,
+  studentId: '69001', // Student ID matches
+  citizenId: '1509900999991', // Citizen ID conflicts!
+  name: 'เด็กชายสมหมาย มั่นคง',
+  dateOfBirth: '20/09/2560'
+}];
+const resOpposite = SETImporter.compareWithGoogleSheets(setOppositeConflict, sheetsOppositeConflict);
+assert.strictEqual(resOpposite.matched.length, 0, 'Must NOT match when citizen ID conflicts even if student ID matched');
+assert.strictEqual(resOpposite.unmatched.length, 1, 'Must flag for Admin review');
+assert.strictEqual(resOpposite.unmatched[0].conflictType, 'identifier_conflict');
+
+// Case 17.4: Sheets has no ID (only Name + DOB) -> Legitimate Predicted Match
+const sheetsNoId = [{
+  rowNumber: 43,
+  name: 'เด็กหญิงดวงกมล สดใส',
+  dateOfBirth: '12/04/2560'
+}];
+const resNoId = SETImporter.compareWithGoogleSheets(setDuangKamol, sheetsNoId);
+assert.strictEqual(resNoId.matched.length, 1, 'Must allow predicted match when Sheets student has no conflicting ID');
+assert.strictEqual(resNoId.matched[0].matchConfidence, 'predicted');
+console.log('  ✅ Passed Identifier Conflict Protection tests');
+
+// 18. Targeted QA Fix 3: Bidirectional Link Table Conflict Rejection
+console.log('\nTest 18: Bidirectional Link Table Conflict Rejection');
+// Case 18.1: 1 Student ID mapped to 2 Citizen IDs (1-to-N conflict)
+const link1toN = [
+  { studentId: 'S100', citizenId: '1509900111111' },
+  { studentId: 'S100', citizenId: '1509900222222' }
+];
+// Test forward lookup (General has studentId S100, needs citizenId):
+const gen1toN_fwd = [{
+  studentId: 'S100',
+  fullName: 'เด็กชายทดสอบ หนึ่ง',
+  normalizedName: 'ทดสอบหนึ่ง',
+  dob: '01/01/2560'
+}];
+const res1toN_fwd = SETImporter.joinSetReports(gen1toN_fwd, [], link1toN);
+assert.strictEqual(res1toN_fwd.joined[0].citizenId, '', 'Forward lookup (studentId -> citizenId) must be rejected');
+
+// Test reverse lookup (General has citizenId 1509900111111 or 1509900222222, needs studentId):
+const gen1toN_rev1 = [{
+  citizenId: '1509900111111',
+  fullName: 'เด็กชายทดสอบ สอง',
+  normalizedName: 'ทดสอบสอง',
+  dob: '01/01/2560'
+}];
+const res1toN_rev1 = SETImporter.joinSetReports(gen1toN_rev1, [], link1toN);
+assert.strictEqual(res1toN_rev1.joined[0].studentId, '', 'Reverse lookup (citizenId -> studentId) must ALSO be rejected in bidirectional check');
+
+const gen1toN_rev2 = [{
+  citizenId: '1509900222222',
+  fullName: 'เด็กชายทดสอบ สาม',
+  normalizedName: 'ทดสอบสาม',
+  dob: '01/01/2560'
+}];
+const res1toN_rev2 = SETImporter.joinSetReports(gen1toN_rev2, [], link1toN);
+assert.strictEqual(res1toN_rev2.joined[0].studentId, '', 'Reverse lookup for second contaminated citizenId must ALSO be rejected');
+
+// Case 18.2: 1 Citizen ID mapped to 2 Student IDs (N-to-1 conflict)
+const linkNto1 = [
+  { studentId: 'S201', citizenId: '1509900333334' },
+  { studentId: 'S202', citizenId: '1509900333334' }
+];
+// Reverse lookup:
+const genNto1_rev = [{
+  citizenId: '1509900333334',
+  fullName: 'เด็กชายทดสอบ สี่',
+  normalizedName: 'ทดสอบสี่',
+  dob: '01/01/2560'
+}];
+const resNto1_rev = SETImporter.joinSetReports(genNto1_rev, [], linkNto1);
+assert.strictEqual(resNto1_rev.joined[0].studentId, '', 'Reverse lookup must be rejected for N-to-1 conflict');
+
+// Forward lookup:
+const genNto1_fwd1 = [{
+  studentId: 'S201',
+  fullName: 'เด็กชายทดสอบ ห้า',
+  normalizedName: 'ทดสอบห้า',
+  dob: '01/01/2560'
+}];
+const resNto1_fwd1 = SETImporter.joinSetReports(genNto1_fwd1, [], linkNto1);
+assert.strictEqual(resNto1_fwd1.joined[0].citizenId, '', 'Forward lookup must ALSO be rejected in bidirectional check for N-to-1');
+
+// Case 18.3: Clean 1-to-1 mapping alongside conflicts
+const cleanLink = [
+  ...link1toN,
+  { studentId: 'S300', citizenId: '1509900444446' } // Clean 1-to-1 pair
+];
+const genClean = [{
+  studentId: 'S300',
+  fullName: 'เด็กชายสะอาด ถูกต้อง',
+  normalizedName: 'สะอาดถูกต้อง',
+  dob: '01/01/2560'
+}];
+const resClean = SETImporter.joinSetReports(genClean, [], cleanLink);
+assert.strictEqual(resClean.joined[0].citizenId, '1509900444446', 'Clean 1-to-1 pair must still resolve properly');
+console.log('  ✅ Passed Bidirectional Link Table Conflict Rejection tests');
+
+console.log('\n🎉 ALL 18 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');

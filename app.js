@@ -2871,7 +2871,7 @@ const google = {
     if (!item) return;
 
     const setRec = item.set || {};
-    const sheetRec = item.sheet || {};
+    const sheetRec = item.sheet || item.conflictCandidate || {};
 
     const studentName = setRec.fullName || sheetRec.name || 'ไม่ระบุชื่อ';
     $('#diffModalStudentName').text(`รายละเอียดเปรียบเทียบ: ${studentName}`);
