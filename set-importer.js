@@ -798,8 +798,8 @@
     // 1. Index Google Sheets students by Compound Key and by Name as ARRAYS (to detect collisions)
     const sheetsByCompound = new Map(); // compKey -> [wrappedStudents]
     const sheetsByName = new Map();     // normName -> [wrappedStudents]
-    const sheetsByCitizenId = new Map();
-    const sheetsByStudentId = new Map();
+    const sheetsByCitizenId = new Map(); // cleanCid -> [wrappedStudents]
+    const sheetsByStudentId = new Map(); // cleanSid -> [wrappedStudents]
 
     sheetsStudents.forEach((student, index) => {
       const normName = normalizeThaiName(student.name);
@@ -825,23 +825,48 @@
       }
       sheetsByName.get(normName).push(wrapped);
 
-      // Index unique IDs if Google Sheets has them
+      // Index unique IDs if Google Sheets has them (stored as arrays to detect duplicates)
       if (student.citizenId) {
         const cleanCid = cleanCitizenId(student.citizenId);
-        if (cleanCid) sheetsByCitizenId.set(cleanCid, wrapped);
+        if (cleanCid) {
+          if (!sheetsByCitizenId.has(cleanCid)) {
+            sheetsByCitizenId.set(cleanCid, []);
+          }
+          sheetsByCitizenId.get(cleanCid).push(wrapped);
+        }
       }
       if (student.studentId) {
         const cleanSid = cleanStudentId(student.studentId);
-        if (cleanSid) sheetsByStudentId.set(cleanSid, wrapped);
+        if (cleanSid) {
+          if (!sheetsByStudentId.has(cleanSid)) {
+            sheetsByStudentId.set(cleanSid, []);
+          }
+          sheetsByStudentId.get(cleanSid).push(wrapped);
+        }
       }
     });
 
     // 2. Pre-scan SET records to detect collisions within SET itself
     const setCompoundCounts = new Map();
+    const setStudentIdCounts = new Map();
+    const setCitizenIdCounts = new Map();
+
     for (const setRec of setJoinedRecords) {
       if (setRec.normalizedName && setRec.dob) {
         const compKey = `${setRec.normalizedName}|${setRec.dob}`;
         setCompoundCounts.set(compKey, (setCompoundCounts.get(compKey) || 0) + 1);
+      }
+      if (setRec.studentId) {
+        const cleanSid = cleanStudentId(setRec.studentId);
+        if (cleanSid) {
+          setStudentIdCounts.set(cleanSid, (setStudentIdCounts.get(cleanSid) || 0) + 1);
+        }
+      }
+      if (setRec.citizenId) {
+        const cleanCid = cleanCitizenId(setRec.citizenId);
+        if (cleanCid) {
+          setCitizenIdCounts.set(cleanCid, (setCitizenIdCounts.get(cleanCid) || 0) + 1);
+        }
       }
     }
 
@@ -871,51 +896,160 @@
       let matchConfidence = 'predicted'; // 'verified' or 'predicted'
       let matchConfidenceLabel = 'การจับคู่แบบคาดการณ์ (ชื่อและวันเกิดตรงกัน) รอ Admin ตรวจสอบ';
 
-      // Path A: Check if a shared unique identifier matches (Highest certainty)
+      // Path A1: Check if Citizen ID matches (National ID - Highest Certainty)
       if (setRec.citizenId && sheetsByCitizenId.has(setRec.citizenId)) {
-        matchedSheetWrapper = sheetsByCitizenId.get(setRec.citizenId);
-        matchConfidence = 'verified';
-        matchConfidenceLabel = 'การจับคู่ที่ยืนยันแล้ว (เลขประจำตัวประชาชนตรงกัน)';
-      } else if (setRec.studentId && sheetsByStudentId.has(setRec.studentId)) {
-        matchedSheetWrapper = sheetsByStudentId.get(setRec.studentId);
-        matchConfidence = 'verified';
-        matchConfidenceLabel = 'การจับคู่ที่ยืนยันแล้ว (รหัสนักเรียนตรงกัน)';
-      }
-
-      // Check for Identifier Conflict in Path A:
-      // If matched by one ID, verify that the other ID (if present on both sides) does not conflict.
-      if (matchedSheetWrapper) {
-        const sheetStudent = matchedSheetWrapper.original;
-        const sheetCid = cleanCitizenId(sheetStudent.citizenId);
-        const sheetSid = cleanStudentId(sheetStudent.studentId);
-        const setCid = cleanCitizenId(setRec.citizenId);
-        const setSid = cleanStudentId(setRec.studentId);
-
-        let idConflictMsg = '';
-        if (setCid && sheetCid && setCid !== sheetCid) {
-          // Zero-PII conflict description: do NOT embed raw 13-digit citizen IDs in free-text messages
-          idConflictMsg = 'เลขประจำตัวประชาชนขัดแย้งกันระหว่างสองระบบ';
-        } else if (setSid && sheetSid && setSid !== sheetSid) {
-          idConflictMsg = `เลขประจำตัวนักเรียนขัดแย้งกัน (SET: ${setSid}, ชีตเดิม: ${sheetSid})`;
+        const cidMatches = sheetsByCitizenId.get(setRec.citizenId) || [];
+        if (cidMatches.length > 1) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_sheets_duplicate_citizenid',
+            description: `พบเลขประจำตัวประชาชนซ้ำกัน ${cidMatches.length} คนในฐานข้อมูลชีตเดิม (ระงับการจับคู่ รอ Admin ตรวจสอบ)`,
+            conflictCandidates: cidMatches.map(c => ({ name: c.original.name, dob: c.dob, rowNumber: c.original.rowNumber }))
+          });
+          continue;
         }
 
-        if (idConflictMsg) {
+        if (setCitizenIdCounts.get(setRec.citizenId) > 1) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_set_duplicate_citizenid',
+            description: 'พบเลขประจำตัวประชาชนซ้ำกันหลายคนในข้อมูลนำเข้า SET (ระงับการจับคู่ รอ Admin ตรวจสอบ)'
+          });
+          continue;
+        }
+
+        const candidate = cidMatches[0];
+        if (candidate.matchedWithSet) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_already_matched',
+            description: 'พบการจับคู่ซ้ำซ้อนกับนักเรียนในชีตเดิมที่ถูกจับคู่ไปแล้ว (รอ Admin ตรวจสอบ)'
+          });
+          continue;
+        }
+
+        const sheetStudent = candidate.original;
+        const sheetSid = cleanStudentId(sheetStudent.studentId);
+        const setSid = cleanStudentId(setRec.studentId);
+
+        if (setSid && sheetSid && setSid !== sheetSid) {
           conflictCount++;
           unmatched.push({
             set: setRec,
             status: 'unmatched',
             conflictType: 'identifier_conflict',
-            description: `พบ${idConflictMsg} (ห้ามจับคู่อัตโนมัติ รอ Admin ตรวจสอบ)`,
+            description: `เลขประจำตัวนักเรียนขัดแย้งกัน (SET: ${setSid}, ชีตเดิม: ${sheetSid}) รอ Admin ตรวจสอบ`,
             conflictCandidate: {
               name: sheetStudent.name,
-              dob: matchedSheetWrapper.dob,
-              citizenId: sheetCid,
+              dob: candidate.dob,
               studentId: sheetSid,
               rowNumber: sheetStudent.rowNumber
             }
           });
           continue;
         }
+
+        matchedSheetWrapper = candidate;
+        matchConfidence = 'verified';
+        matchConfidenceLabel = 'การจับคู่ที่ยืนยันแล้ว (เลขประจำตัวประชาชนตรงกัน)';
+      }
+      // Path A2: Check if Student ID matches (Verified Match on SET Student ID)
+      else if (setRec.studentId && sheetsByStudentId.has(setRec.studentId)) {
+        const sidMatches = sheetsByStudentId.get(setRec.studentId) || [];
+        if (sidMatches.length > 1) {
+          // Requirement 10: Duplicate studentId in Google Sheets
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_sheets_duplicate_studentid',
+            description: `พบรหัสนักเรียน '${setRec.studentId}' ซ้ำกัน ${sidMatches.length} คนในฐานข้อมูลชีตเดิม (ระงับการจับคู่ รอ Admin ตรวจสอบ)`,
+            conflictCandidates: sidMatches.map(c => ({ name: c.original.name, dob: c.dob, rowNumber: c.original.rowNumber }))
+          });
+          continue;
+        }
+
+        if (setStudentIdCounts.get(setRec.studentId) > 1) {
+          // Requirement 10: Duplicate studentId in SET import
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_set_duplicate_studentid',
+            description: `พบรหัสนักเรียน '${setRec.studentId}' ซ้ำกันหลายคนในข้อมูลนำเข้า SET (ระงับการจับคู่ รอ Admin ตรวจสอบ)`
+          });
+          continue;
+        }
+
+        const candidate = sidMatches[0];
+        if (candidate.matchedWithSet) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'collision_already_matched',
+            description: `พบรหัสนักเรียน '${setRec.studentId}' จับคู่ซ้ำซ้อนกับนักเรียนในชีตเดิมที่ถูกจับคู่ไปแล้ว (รอ Admin ตรวจสอบ)`
+          });
+          continue;
+        }
+
+        const sheetStudent = candidate.original;
+        const sheetCid = cleanCitizenId(sheetStudent.citizenId);
+        const setCid = cleanCitizenId(setRec.citizenId);
+
+        // Check if citizen IDs conflict
+        if (setCid && sheetCid && setCid !== sheetCid) {
+          conflictCount++;
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'identifier_conflict',
+            description: 'เลขประจำตัวประชาชนขัดแย้งกันระหว่างสองระบบ (ระงับการจับคู่ รอ Admin ตรวจสอบ)',
+            conflictCandidate: {
+              name: sheetStudent.name,
+              dob: candidate.dob,
+              citizenId: sheetCid,
+              rowNumber: sheetStudent.rowNumber
+            }
+          });
+          continue;
+        }
+
+        // Requirement 11: หากรหัสนักเรียนตรงกันแต่ชื่อหรือวันเกิดแตกต่าง ให้แสดงเป็นรายการขัดแย้งเพื่อให้ Admin ตรวจสอบ ห้ามแก้ข้อมูลอัตโนมัติ
+        const nameDiffers = setRec.fullName && sheetStudent.name &&
+          (normalizeThaiName(setRec.fullName) !== normalizeThaiName(sheetStudent.name));
+        const dobDiffers = setRec.dob && candidate.dob && (setRec.dob !== candidate.dob);
+
+        if (nameDiffers || dobDiffers) {
+          conflictCount++;
+          const conflictDetails = [];
+          if (nameDiffers) conflictDetails.push(`ชื่อต่างกัน (SET: '${setRec.fullName}', ชีต: '${sheetStudent.name}')`);
+          if (dobDiffers) conflictDetails.push(`วันเกิดต่างกัน (SET: '${setRec.dob}', ชีต: '${candidate.dob}')`);
+
+          unmatched.push({
+            set: setRec,
+            status: 'unmatched',
+            conflictType: 'studentid_data_conflict',
+            description: `รหัสนักเรียนตรงกัน (${setRec.studentId}) แต่ข้อมูลขัดแย้ง: ${conflictDetails.join(', ')} (ระงับการจับคู่อัตโนมัติ รอ Admin ตรวจสอบ)`,
+            conflictCandidate: {
+              name: sheetStudent.name,
+              dob: candidate.dob,
+              studentId: setRec.studentId,
+              rowNumber: sheetStudent.rowNumber
+            }
+          });
+          continue;
+        }
+
+        matchedSheetWrapper = candidate;
+        matchConfidence = 'verified';
+        matchConfidenceLabel = 'การจับคู่ที่ยืนยันแล้ว (รหัสนักเรียนตรงกัน)';
       }
 
       // Path B: If no verified unique ID match, use Compound Key (Normalized Name + DOB)

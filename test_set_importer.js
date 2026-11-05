@@ -676,4 +676,103 @@ assert.throws(() => {
 
 console.log('  ✅ Passed Header Row Auto-Detection tests: All 5 cases (Row 0, 1, 3, 5 & Invalid) verified');
 
-console.log('\n🎉 ALL 20 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');
+// 21. Phase 2: Student ID Verified Match (Google Sheets provides studentId)
+console.log('\nTest 21: Student ID Verified Match (Google Sheets provides studentId)');
+const setWithSid = [{
+  studentId: '069001',
+  fullName: 'เด็กชายสมหมาย มุ่งมั่น',
+  normalizedName: 'สมหมายมุ่งมั่น',
+  dob: '10/11/2562',
+  disabilityTypeSet: 'บกพร่องทางสติปัญญา'
+}];
+const sheetsWithSid = [{
+  rowNumber: 3,
+  studentId: '069001',
+  name: 'เด็กชายสมหมาย มุ่งมั่น',
+  dateOfBirth: '10/11/2562',
+  disabilityByCard: 'บกพร่องทางสติปัญญา'
+}];
+const resSidVerified = SETImporter.compareWithGoogleSheets(setWithSid, sheetsWithSid);
+assert.strictEqual(resSidVerified.matched.length, 1, 'Should match on studentId');
+assert.strictEqual(resSidVerified.matched[0].matchConfidence, 'verified', 'Must be verified match when shared studentId exists');
+assert.strictEqual(resSidVerified.summary.verifiedCount, 1, 'Verified count must be 1');
+console.log('  ✅ Passed Student ID Verified Match test');
+
+// 22. Phase 2: Duplicate Student ID in Google Sheets (Suppress Match & Alert Admin)
+console.log('\nTest 22: Duplicate Student ID in Google Sheets (Suppress Match & Alert Admin)');
+const sheetsDuplicateSid = [
+  { rowNumber: 10, studentId: '069005', name: 'เด็กชายเอก หนึ่ง', dateOfBirth: '01/01/2560' },
+  { rowNumber: 11, studentId: '069005', name: 'เด็กชายเอก สอง', dateOfBirth: '02/02/2560' }
+];
+const setSingleSid = [{
+  studentId: '069005',
+  fullName: 'เด็กชายเอก หนึ่ง',
+  normalizedName: 'เอกหนึ่ง',
+  dob: '01/01/2560'
+}];
+const resSheetsSidCollision = SETImporter.compareWithGoogleSheets(setSingleSid, sheetsDuplicateSid);
+assert.strictEqual(resSheetsSidCollision.matched.length, 0, 'Must NOT auto-match when Google Sheets has duplicate studentId');
+assert.strictEqual(resSheetsSidCollision.unmatched.length, 1, 'Must place collision record in unmatched for Admin review');
+assert.strictEqual(resSheetsSidCollision.unmatched[0].conflictType, 'collision_sheets_duplicate_studentid');
+assert.strictEqual(resSheetsSidCollision.summary.conflictCount, 1);
+console.log('  ✅ Passed Duplicate Student ID in Google Sheets protection test');
+
+// 23. Phase 2: Duplicate Student ID in SET (Suppress Match & Alert Admin)
+console.log('\nTest 23: Duplicate Student ID in SET (Suppress Match & Alert Admin)');
+const setDuplicateSid = [
+  { studentId: '069008', fullName: 'เด็กหญิงแก้ว รัตนา', normalizedName: 'แก้วรัตนา', dob: '15/06/2562' },
+  { studentId: '069008', fullName: 'เด็กหญิงแก้ว มณี', normalizedName: 'แก้วมณี', dob: '20/07/2562' }
+];
+const sheetsSingleSid = [
+  { rowNumber: 30, studentId: '069008', name: 'เด็กหญิงแก้ว รัตนา', dateOfBirth: '15/06/2562' }
+];
+const resSetSidCollision = SETImporter.compareWithGoogleSheets(setDuplicateSid, sheetsSingleSid);
+assert.strictEqual(resSetSidCollision.matched.length, 0, 'Must NOT auto-match when SET contains duplicate studentId');
+assert.strictEqual(resSetSidCollision.unmatched.length, 2, 'Both duplicate SET records must be flagged for Admin review');
+assert.strictEqual(resSetSidCollision.unmatched[0].conflictType, 'collision_set_duplicate_studentid');
+console.log('  ✅ Passed Duplicate Student ID in SET protection test');
+
+// 24. Phase 2: Student ID Matches but Name or DOB Conflicts (Requirement 11)
+console.log('\nTest 24: Student ID Matches but Name or DOB Conflicts (Strictly Reject Auto-Match)');
+// Case 24.1: Same studentId but different name
+const setDiffName = [{
+  studentId: '069010',
+  fullName: 'เด็กชายสมชาย ใจดี',
+  normalizedName: 'สมชายใจดี',
+  dob: '10/10/2562'
+}];
+const sheetsDiffName = [{
+  rowNumber: 40,
+  studentId: '069010',
+  name: 'เด็กหญิงวิภาดา มั่งคั่ง',
+  dateOfBirth: '10/10/2562'
+}];
+const resNameConflict = SETImporter.compareWithGoogleSheets(setDiffName, sheetsDiffName);
+assert.strictEqual(resNameConflict.matched.length, 0, 'Must NOT auto-match when names conflict despite same studentId');
+assert.strictEqual(resNameConflict.updatedDiff.length, 0, 'Must NOT treat as simple diff when name contradicts identity');
+assert.strictEqual(resNameConflict.unmatched.length, 1, 'Must flag as studentid_data_conflict in unmatched');
+assert.strictEqual(resNameConflict.unmatched[0].conflictType, 'studentid_data_conflict');
+assert.strictEqual(resNameConflict.unmatched[0].description.includes('ชื่อต่างกัน'), true, 'Description must detail name discrepancy');
+
+// Case 24.2: Same studentId and name, but conflicting DOB
+const setDiffDob = [{
+  studentId: '069015',
+  fullName: 'เด็กชายชูชาติ มุ่งดี',
+  normalizedName: 'ชูชาติมุ่งดี',
+  dob: '10/11/2562'
+}];
+const sheetsDiffDob = [{
+  rowNumber: 50,
+  studentId: '069015',
+  name: 'เด็กชายชูชาติ มุ่งดี',
+  dateOfBirth: '25/08/2561' // Different DOB
+}];
+const resDobConflictWithSid = SETImporter.compareWithGoogleSheets(setDiffDob, sheetsDiffDob);
+assert.strictEqual(resDobConflictWithSid.matched.length, 0, 'Must NOT auto-match when DOB conflicts despite same studentId');
+assert.strictEqual(resDobConflictWithSid.updatedDiff.length, 0, 'Must NOT treat as simple diff when DOB contradicts identity');
+assert.strictEqual(resDobConflictWithSid.unmatched.length, 1, 'Must flag as studentid_data_conflict in unmatched');
+assert.strictEqual(resDobConflictWithSid.unmatched[0].conflictType, 'studentid_data_conflict');
+assert.strictEqual(resDobConflictWithSid.unmatched[0].description.includes('วันเกิดต่างกัน'), true, 'Description must detail DOB discrepancy');
+console.log('  ✅ Passed Student ID Data Conflict protection tests (Name & DOB discrepancies)');
+
+console.log('\n🎉 ALL 24 UNIT TEST SUITES PASSED SUCCESSFULLY!\n');

@@ -1163,6 +1163,9 @@ const google = {
     if (state.currentEditingStudent) {
       // UPDATE Operation
       studentObj.rowNumber = state.currentEditingStudent.rowNumber;
+      if (state.currentEditingStudent.studentId) {
+        studentObj.studentId = state.currentEditingStudent.studentId;
+      }
       
       google.script.run
         .withSuccessHandler(response => {
