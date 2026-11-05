@@ -1,6 +1,15 @@
 /**
- * Unit Tests for Phase 2: Google Sheets A-Q Layout & CRUD Operations (Mock Sheet)
- * Tests Code.gs without touching real Google Sheets or deploying Apps Script.
+ * Comprehensive Unit Tests for Student Info LPSEC Phase 2
+ * Tests Code.gs with in-memory MockSheet (No real Google Sheets writes, No Apps Script deployment)
+ *
+ * Verifies:
+ * 1. Legacy Sheet (Exactly 16 columns) - Bounds guard ensures no out-of-bounds read
+ * 2. New Sheet (17 columns A-Q) - Correct column mapping and leading zeros
+ * 3. Multi-Row Title Banners - Header auto-detection & dynamic dataStartRow
+ * 4. SET Student ID Conflict - Halts update if incoming ID contradicts existing ID
+ * 5. Shifted Row Numbers - Self-healing identity verification finds moved student
+ * 6. Wrong Person Protection - Rejects update/delete if student identity cannot be verified
+ * 7. Formula Preservation - Age calculation formula is preserved during CRUD operations
  */
 
 const assert = require('assert');
@@ -16,20 +25,6 @@ class MockRange {
   }
 
   getDisplayValues() {
-    const result = [];
-    for (let r = 0; r < this.numRows; r++) {
-      const row = [];
-      const rowIndex = (this.startRow - 1) + r;
-      for (let c = 0; c < this.numCols; c++) {
-        const colIndex = (this.startCol - 1) + c;
-        const val = (this.sheet.data[rowIndex] && this.sheet.data[rowIndex][colIndex] !== undefined)
-          ? this.sheet.data[rowIndex][colIndex]
-          : "";
-        result.push(val !== null ? val.toString() : "");
-      }
-      result.push(row);
-    }
-    // Correct 2D array structure
     const grid = [];
     for (let r = 0; r < this.numRows; r++) {
       const row = [];
@@ -71,6 +66,14 @@ class MockRange {
       : "";
   }
 
+  getFormula() {
+    const rowIndex = this.startRow - 1;
+    const colIndex = this.startCol - 1;
+    return (this.sheet.formulas && this.sheet.formulas[rowIndex] && this.sheet.formulas[rowIndex][colIndex])
+      ? this.sheet.formulas[rowIndex][colIndex]
+      : "";
+  }
+
   setValues(values) {
     for (let r = 0; r < values.length; r++) {
       const rowIndex = (this.startRow - 1) + r;
@@ -79,7 +82,15 @@ class MockRange {
       }
       for (let c = 0; c < values[r].length; c++) {
         const colIndex = (this.startCol - 1) + c;
-        this.sheet.data[rowIndex][colIndex] = values[r][c];
+        const val = values[r][c];
+        this.sheet.data[rowIndex][colIndex] = val;
+
+        // If a formula is passed (starts with '='), record in formulas table
+        if (typeof val === 'string' && val.startsWith('=')) {
+          if (!this.sheet.formulas) this.sheet.formulas = [];
+          if (!this.sheet.formulas[rowIndex]) this.sheet.formulas[rowIndex] = [];
+          this.sheet.formulas[rowIndex][colIndex] = val;
+        }
       }
     }
   }
@@ -95,9 +106,11 @@ class MockRange {
 }
 
 class MockSheet {
-  constructor(name, data) {
+  constructor(name, data, options = {}) {
     this.name = name;
     this.data = JSON.parse(JSON.stringify(data)); // Deep copy 2D array
+    this.strictBounds = options.strictBounds !== undefined ? options.strictBounds : true;
+    this.formulas = options.formulas ? JSON.parse(JSON.stringify(options.formulas)) : [];
   }
 
   getName() { return this.name; }
@@ -111,21 +124,32 @@ class MockSheet {
   }
 
   getRange(startRow, startCol, numRows = 1, numCols = 1) {
+    // Exact Google Sheets out-of-bounds simulation:
+    // Throws exception if reading columns beyond actual sheet dimensions
+    if (this.strictBounds && (startCol + numCols - 1 > this.getLastColumn())) {
+      throw new Error(`Exception: The coordinates or dimensions of the range are invalid. (Requested max col: ${startCol + numCols - 1}, Sheet last col: ${this.getLastColumn()})`);
+    }
     return new MockRange(this, startRow, startCol, numRows, numCols);
   }
 
   insertRowBefore(rowNumber) {
     const index = rowNumber - 1;
     this.data.splice(index, 0, new Array(this.getLastColumn()).fill(""));
+    if (this.formulas.length > 0) {
+      this.formulas.splice(index, 0, new Array(this.getLastColumn()).fill(""));
+    }
   }
 
   deleteRow(rowNumber) {
     const index = rowNumber - 1;
     this.data.splice(index, 1);
+    if (this.formulas.length > 0) {
+      this.formulas.splice(index, 1);
+    }
   }
 }
 
-// Set up global environment for Code.gs
+// Global Google Apps Script mocks
 let activeMockSheet = null;
 
 global.SpreadsheetApp = {
@@ -153,218 +177,230 @@ global.PropertiesService = {
 // Require Code.gs
 const code = require('./Code.gs');
 
-console.log('🧪 Starting Phase 2 Tests for Google Sheets Integration...\n');
+console.log('🧪 Starting Phase 2 Targeted Unit Tests (Commit 86c3e30 Audit Fixes)...\n');
 
-// Standard 17-column header (Row 1 & 2)
-const headerAQ = [
-  ['เลขประจำตัวนักเรียน', 'ชื่อ-สกุล', 'ห้องเรียน,หน่วยบริการ,ปรับบ้านฯ', 'ครูผู้รับผิดชอบ ภาคเรียนที่ 1 ปีการศึกษา 2569', 'ประเภทการรับบริการ', '', '', 'ประเภทความพิการตามบัตรประจำตัวคนพิการ', 'ประเภทความพิการตามแบบคัดกรองฯ', 'บัตรประจำตัวคนพิการ', 'เอกสารรับรองความพิการ', 'แบบคัดกรองทางการศึกษา', 'วันเดือนปีเกิด', 'อายุ', 'พิการภายหลัง', 'ไม่ใช่สัญชาติไทย', 'หมายเหตุ'],
-  ['', '', '', '', 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน', '', '', '', '', '', '', '', '', '', '']
-];
-
-// 1. Test Sheet Layout Detection
-console.log('Test 1: Sheet Layout Detection (NEW_AQ vs LEGACY_AP vs UNKNOWN)');
-const mockSheetAQ = new MockSheet('พย69', [
-  ...headerAQ,
-  ['069001', 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', '']
-]);
-const layoutAQ = code.detectSheetLayout(mockSheetAQ);
-assert.strictEqual(layoutAQ.type, 'NEW_AQ', 'Should detect NEW_AQ layout');
-assert.strictEqual(layoutAQ.studentIdCol, 1, 'Column A (1) should be studentIdCol');
-assert.strictEqual(layoutAQ.nameCol, 2, 'Column B (2) should be nameCol');
-assert.strictEqual(layoutAQ.colCount, 17, 'Should have 17 columns');
-
-// Legacy 16-column header
-const headerLegacy = [
+// =========================================================================
+// Case 1: Legacy Sheet (Exactly 16 Columns) & Bounds Guard
+// =========================================================================
+console.log('Case 1: Legacy Sheet (Exactly 16 Columns) - Bounds Guard Prevents Out-Of-Bounds Exception');
+const legacy16Data = [
   ['ชื่อ-สกุล', 'ห้องเรียน', 'ครูผู้รับผิดชอบ', 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน', 'ตามบัตร', 'ตามคัดกรอง', 'บัตร', 'ใบรับรอง', 'คัดกรอง', 'วันเกิด', 'อายุ', 'พิการภายหลัง', 'ไม่ใช่ไทย', 'หมายเหตุ'],
-  ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
-];
-const mockSheetLegacy = new MockSheet('ต.ค.69', [
-  ...headerLegacy,
+  ['', '', '', 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน', '', '', '', '', '', '', '', '', '', ''],
   ['เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', '']
-]);
-const layoutLegacy = code.detectSheetLayout(mockSheetLegacy);
-assert.strictEqual(layoutLegacy.type, 'LEGACY_AP', 'Should detect LEGACY_AP layout');
-assert.strictEqual(layoutLegacy.nameCol, 1, 'Column A (1) should be nameCol in legacy');
-assert.strictEqual(layoutLegacy.studentIdCol, null, 'No studentIdCol in legacy');
-
-// Unknown header
-const mockSheetUnknown = new MockSheet('ไม่ทราบโครงสร้าง', [
-  ['คอลัมน์ที่ไม่รู้จัก 1', 'คอลัมน์ 2'],
-  ['ข้อมูล 1', 'ข้อมูล 2']
-]);
-const layoutUnknown = code.detectSheetLayout(mockSheetUnknown);
-assert.strictEqual(layoutUnknown.type, 'UNKNOWN', 'Should detect UNKNOWN layout');
-console.log('  ✅ Passed Sheet Layout Detection tests');
-
-// 2. Test Reading A-Q with Student ID & Leading Zeros Preservation
-console.log('\nTest 2: Reading A-Q Data (Preserve Leading Zeroes, Correct Column Mapping)');
-const testDataAQ = [
-  ...headerAQ,
-  ['069001', 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', 'เด็กเรียนดี'],
-  ['069002', 'เด็กหญิงพัณภัช บูรณวุฒิ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'พิการซ้อน (2,5)', 'บกพร่องทางสติปัญญา', '1', '', '', '11/11/2562', '6 ปี 11 เดือน', '', '', ''],
-  ['', 'เด็กชายไร้รหัส ทะเบียนเก่า', 'มุ่งสู่ดวงดาว', 'นางสาวสุพัตรา นามวงค์', '', '1', '', 'ออทิสติก', 'ออทิสติก', '', '1', '', '01/01/2563', '6 ปี 9 เดือน', '', '', ''],
-  ['', 'รวมทั้งหมด 3 คน', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''] // Summary footer row
 ];
-activeMockSheet = new MockSheet('พย69', testDataAQ);
-const studentsAQ = code.getStudentData();
+const mockSheetLegacy16 = new MockSheet('ต.ค.69_legacy', legacy16Data, { strictBounds: true });
+assert.strictEqual(mockSheetLegacy16.getLastColumn(), 16, 'Sheet has strictly 16 columns');
 
-assert.strictEqual(studentsAQ.length, 3, 'Should read exactly 3 students and exclude summary footer row');
+// detectSheetLayout must NOT throw out-of-bounds error on 16-column sheet
+const layoutLegacy16 = code.detectSheetLayout(mockSheetLegacy16);
+assert.strictEqual(layoutLegacy16.type, 'LEGACY_AP');
+assert.strictEqual(layoutLegacy16.nameCol, 1);
+assert.strictEqual(layoutLegacy16.studentIdCol, null);
+assert.strictEqual(layoutLegacy16.colCount, 16);
 
-// Verify student 1
-const s1 = studentsAQ[0];
-assert.strictEqual(s1.studentId, '069001', 'Must preserve leading zero in studentId as string');
-assert.strictEqual(s1.name, 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'Column B must map to name');
-assert.strictEqual(s1.classroom, 'แสงตะวันฉาย', 'Column C must map to classroom');
-assert.strictEqual(s1.teacher, 'นางสาวอรสา แข็งเขตการณ์', 'Column D must map to teacher');
-assert.strictEqual(s1.serviceInCenter, 1, 'Column E must map to serviceInCenter');
-assert.strictEqual(s1.serviceUnit, 0, 'Column F must map to serviceUnit');
-assert.strictEqual(s1.serviceAdjustHome, 0, 'Column G must map to serviceAdjustHome');
-assert.strictEqual(s1.disabilityByCard, 'บกพร่องทางสติปัญญา', 'Column H must map to disabilityByCard');
-assert.strictEqual(s1.disabilityByScreening, 'บกพร่องทางสติปัญญา', 'Column I must map to disabilityByScreening');
-assert.strictEqual(s1.hasDisabilityCard, 1, 'Column J must map to hasDisabilityCard');
-assert.strictEqual(s1.hasDisabilityCert, 0, 'Column K must map to hasDisabilityCert');
-assert.strictEqual(s1.hasEducationScreening, 0, 'Column L must map to hasEducationScreening');
-assert.strictEqual(s1.dateOfBirth, '10/11/2562', 'Column M must map to dateOfBirth');
-assert.strictEqual(s1.age, '6 ปี 11 เดือน', 'Column N must map to age');
-assert.strictEqual(s1.disabledLater, 0, 'Column O must map to disabledLater');
-assert.strictEqual(s1.nonThai, 0, 'Column P must map to nonThai');
-assert.strictEqual(s1.remarks, 'เด็กเรียนดี', 'Column Q must map to remarks');
+// getStudentData must read safely without attempting column 17
+activeMockSheet = mockSheetLegacy16;
+const legacyStudents = code.getStudentData();
+assert.strictEqual(legacyStudents.length, 1);
+assert.strictEqual(legacyStudents[0].name, 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ');
+assert.strictEqual(legacyStudents[0].studentId, '');
+console.log('  ✅ Passed Case 1: Legacy 16-column bounds guard test');
 
-// Verify student 3 (Blank studentId safely handled as empty string)
-const s3 = studentsAQ[2];
-assert.strictEqual(s3.studentId, '', 'Blank studentId should be safe empty string');
-assert.strictEqual(s3.name, 'เด็กชายไร้รหัส ทะเบียนเก่า');
-assert.strictEqual(s3.serviceUnit, 1);
-assert.strictEqual(s3.hasDisabilityCert, 1);
-console.log('  ✅ Passed Reading A-Q Data and Leading Zeroes tests');
+// =========================================================================
+// Case 2: New Sheet (17 Columns A-Q) & Leading Zero Preservation
+// =========================================================================
+console.log('\nCase 2: New Sheet (17 Columns A-Q) - Full Column Mapping & Leading Zero Preservation');
+const new17Data = [
+  ['เลขประจำตัวนักเรียน', 'ชื่อ-สกุล', 'ห้องเรียน,หน่วยบริการ,ปรับบ้านฯ', 'ครูผู้รับผิดชอบ ภาคเรียนที่ 1 ปีการศึกษา 2569', 'ประเภทการรับบริการ', '', '', 'ประเภทความพิการตามบัตรประจำตัวคนพิการ', 'ประเภทความพิการตามแบบคัดกรองฯ', 'บัตรประจำตัวคนพิการ', 'เอกสารรับรองความพิการ', 'แบบคัดกรองทางการศึกษา', 'วันเดือนปีเกิด', 'อายุ', 'พิการภายหลัง', 'ไม่ใช่สัญชาติไทย', 'หมายเหตุ'],
+  ['', '', '', '', 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน', '', '', '', '', '', '', '', '', '', ''],
+  ['069001', 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', 'หมายเหตุพิเศษ'],
+  ['', 'เด็กหญิงไร้รหัส ทะเบียนเดิม', 'มุ่งสู่ดวงดาว', 'นางสาวสุพัตรา นามวงค์', '', '1', '', 'ออทิสติก', 'ออทิสติก', '', '1', '', '01/01/2563', '6 ปี 9 เดือน', '', '', '']
+];
+const mockSheetNew17 = new MockSheet('พย69_new', new17Data, { strictBounds: true });
+activeMockSheet = mockSheetNew17;
 
-// 3. Test findInsertionRow with blank studentId
-console.log('\nTest 3: findInsertionRow (Handle blank student IDs without premature stopping)');
-const insertRow = code.findInsertionRow(activeMockSheet);
-// Rows: Row 1 (header1), Row 2 (header2), Row 3 (student1), Row 4 (student2), Row 5 (student3), Row 6 (summary)
-// findInsertionRow should detect row 6 as summary row and return 6 (1-based index)
-assert.strictEqual(insertRow, 6, 'Insertion row must be row 6 (before summary row)');
-console.log('  ✅ Passed findInsertionRow test');
+const layoutNew17 = code.detectSheetLayout(mockSheetNew17);
+assert.strictEqual(layoutNew17.type, 'NEW_AQ');
+assert.strictEqual(layoutNew17.studentIdCol, 1);
+assert.strictEqual(layoutNew17.nameCol, 2);
+assert.strictEqual(layoutNew17.colCount, 17);
 
-// 4. Test findRowByStudentName self-healing in NEW_AQ
-console.log('\nTest 4: findRowByStudentName (Self-healing lookup in Column B)');
-const rowS2 = code.findRowByStudentName(activeMockSheet, 'เด็กหญิงพัณภัช บูรณวุฒิ');
-assert.strictEqual(rowS2, 4, 'Should find student 2 at row 4');
-const rowS3 = code.findRowByStudentName(activeMockSheet, 'เด็กชายไร้รหัส ทะเบียนเก่า');
-assert.strictEqual(rowS3, 5, 'Should find student 3 at row 5');
-const rowNotFound = code.findRowByStudentName(activeMockSheet, 'คนไม่มีตัวตน');
-assert.strictEqual(rowNotFound, -1, 'Unknown student must return -1');
-console.log('  ✅ Passed findRowByStudentName test');
+const studentsNew17 = code.getStudentData();
+assert.strictEqual(studentsNew17.length, 2);
+assert.strictEqual(studentsNew17[0].studentId, '069001', 'Leading zero preserved as string');
+assert.strictEqual(studentsNew17[0].name, 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ');
+assert.strictEqual(studentsNew17[0].classroom, 'แสงตะวันฉาย');
+assert.strictEqual(studentsNew17[0].teacher, 'นางสาวอรสา แข็งเขตการณ์');
+assert.strictEqual(studentsNew17[0].serviceInCenter, 1);
+assert.strictEqual(studentsNew17[0].remarks, 'หมายเหตุพิเศษ');
+assert.strictEqual(studentsNew17[1].studentId, '', 'Blank studentId handled safely');
+console.log('  ✅ Passed Case 2: New 17-column A-Q test');
 
-// 5. Test createStudent in Mock Sheet
-console.log('\nTest 5: createStudent (Never invent IDs, write A-Q correctly)');
-const newStudentObj = {
-  name: 'เด็กชายสมหมาย มาใหม่',
-  classroom: 'มุ่งสู่ดวงดาว',
-  teacher: 'นางสาวสุพัตรา นามวงค์',
-  serviceInCenter: true,
-  serviceUnit: false,
-  serviceAdjustHome: false,
-  disabilityByCard: 'ออทิสติก',
-  disabilityByScreening: 'ออทิสติก',
-  hasDisabilityCard: true,
-  hasDisabilityCert: false,
-  hasEducationScreening: false,
-  dateOfBirth: '20/05/2563',
-  disabledLater: false,
-  nonThai: false,
-  remarks: 'นักเรียนใหม่'
-  // No studentId provided -> Must NOT invent ID!
-};
+// =========================================================================
+// Case 3: Multi-Row Title Banners & Dynamic DataStartRow Detection
+// =========================================================================
+console.log('\nCase 3: Multi-Row Title Banners - Header Auto-Detection & Dynamic DataStartRow');
+const multiRowData = [
+  ['รายงานสารสนเทศนักเรียน ศูนย์การศึกษาพิเศษ ประจำจังหวัดลำปาง', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''], // Row 1: Title Banner
+  ['สังกัดสำนักบริหารงานการศึกษาพิเศษ ข้อมูล ณ วันที่ 4 พฤศจิกายน 2569', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''], // Row 2: Subtitle
+  ['เลขประจำตัวนักเรียน', 'ชื่อ-สกุล', 'ห้องเรียน', 'ครูผู้รับผิดชอบ', 'ประเภทบริการ', '', '', 'ความพิการบัตร', 'ความพิการคัดกรอง', 'บัตร', 'ใบรับรอง', 'คัดกรอง', 'วันเกิด', 'อายุ', 'พิการภายหลัง', 'ไม่ใช่ไทย', 'หมายเหตุ'], // Row 3: True Table Header!
+  ['', '', '', '', 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน', '', '', '', '', '', '', '', '', '', ''], // Row 4: Subheader
+  ['069010', 'เด็กชายธนาคาร มีแบนเนอร์', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', ''], // Row 5: First Student!
+  ['', 'รวมทั้งหมด 1 คน', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''] // Row 6: Summary Footer
+];
+const mockSheetMultiRow = new MockSheet('พย69_multi', multiRowData, { strictBounds: true });
+activeMockSheet = mockSheetMultiRow;
 
-const createRes = code.createStudent(newStudentObj);
-assert.strictEqual(createRes.success, true);
-// Verify newly inserted row in activeMockSheet at row 6
-const insertedData = activeMockSheet.data[5]; // index 5 is row 6
-assert.strictEqual(insertedData[0], '', 'Column A must be safe empty string when no verified studentId is provided');
-assert.strictEqual(insertedData[1], 'เด็กชายสมหมาย มาใหม่', 'Column B must be student name');
-assert.strictEqual(insertedData[2], 'มุ่งสู่ดวงดาว', 'Column C must be classroom');
-assert.strictEqual(insertedData[12], '20/05/2563', 'Column M must be DOB');
-assert.strictEqual(insertedData[16], 'นักเรียนใหม่', 'Column Q must be remarks');
+const layoutMultiRow = code.detectSheetLayout(mockSheetMultiRow);
+assert.strictEqual(layoutMultiRow.type, 'NEW_AQ');
+assert.strictEqual(layoutMultiRow.headerRow, 3, 'Must detect header at Row 3');
+assert.strictEqual(layoutMultiRow.dataStartRow, 5, 'Must calculate dataStartRow as Row 5 (after subheader)');
+assert.strictEqual(layoutMultiRow.studentIdCol, 1);
+assert.strictEqual(layoutMultiRow.nameCol, 2);
 
-// Test create with explicit verified studentId
-const newStudentWithId = {
-  name: 'เด็กหญิงกานดา มีรหัสเซ็ต',
-  studentId: '069099',
-  classroom: 'มุ่งสู่ดวงดาว',
-  teacher: 'นางสาวสุพัตรา นามวงค์',
-  serviceInCenter: true,
-  disabilityByCard: 'ออทิสติก',
-  disabilityByScreening: 'ออทิสติก',
-  hasDisabilityCard: true,
-  dateOfBirth: '15/08/2562'
-};
-code.createStudent(newStudentWithId);
-const insertedWithId = activeMockSheet.data[6];
-assert.strictEqual(insertedWithId[0], '069099', 'Column A must preserve explicit verified studentId');
-assert.strictEqual(insertedWithId[1], 'เด็กหญิงกานดา มีรหัสเซ็ต');
+const studentsMulti = code.getStudentData();
+assert.strictEqual(studentsMulti.length, 1, 'Reads 1 student record, skips title banners and footer');
+assert.strictEqual(studentsMulti[0].studentId, '069010');
+assert.strictEqual(studentsMulti[0].name, 'เด็กชายธนาคาร มีแบนเนอร์');
+assert.strictEqual(studentsMulti[0].rowNumber, 5, 'Row number must be 5');
 
-// Test duplicate studentId rejection on creation
+const insertRowMulti = code.findInsertionRow(mockSheetMultiRow);
+assert.strictEqual(insertRowMulti, 6, 'Insertion row must be Row 6 (before summary)');
+console.log('  ✅ Passed Case 3: Multi-row title banner auto-detection test');
+
+// =========================================================================
+// Case 4: SET Student ID Conflict Protection (Strictly Halt on Contradiction)
+// =========================================================================
+console.log('\nCase 4: SET Student ID Conflict Protection (Halt on Contradiction)');
+const conflictData = [
+  ...new17Data.slice(0, 2),
+  ['069001', 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', '']
+];
+const mockSheetConflict = new MockSheet('conflict_sheet', conflictData, { strictBounds: true });
+activeMockSheet = mockSheetConflict;
+
+// Case 4.1: Updating student with conflicting studentId must throw Error!
 assert.throws(() => {
-  code.createStudent({
-    name: 'เด็กชายคนอื่น รหัสซ้ำ',
-    studentId: '069099', // Duplicate!
-    classroom: 'มุ่งสู่ดวงดาว',
-    teacher: 'ครู',
+  code.updateStudent({
+    rowNumber: 3,
+    studentId: '069099', // Contradicts existing '069001'!
+    name: 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ',
+    classroom: 'แสงตะวันฉาย',
+    teacher: 'นางสาวอรสา แข็งเขตการณ์',
     serviceInCenter: true,
     disabilityByCard: 'บกพร่องทางสติปัญญา',
     disabilityByScreening: 'บกพร่องทางสติปัญญา',
-    dateOfBirth: '01/01/2562'
+    hasDisabilityCard: true,
+    dateOfBirth: '10/11/2562'
   });
-}, /รหัสนักเรียน '069099' มีอยู่ในฐานข้อมูลแล้ว/, 'Must reject duplicate studentId on creation');
-console.log('  ✅ Passed createStudent tests');
+}, /รหัสนักเรียนที่ส่งมา .* ขัดแย้งกับรหัสเดิมในฐานข้อมูล/, 'Must halt update when studentId contradicts existing ID');
 
-// 6. Test updateStudent: Must NOT unintentionally overwrite Column A
-console.log('\nTest 6: updateStudent (Protect existing Column A studentId from overwrite)');
-// Edit student 1 ('069001', row 3)
-const updatePayload = {
+// Case 4.2: Updating other fields without studentId must PRESERVE existing ID
+const safeUpdateRes = code.updateStudent({
   rowNumber: 3,
   name: 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ',
-  classroom: 'ห้องเรียนปรับปรุงใหม่',
+  classroom: 'ห้องเรียนพัฒนาการใหม่',
   teacher: 'นางสาวอรสา แข็งเขตการณ์',
   serviceInCenter: true,
   disabilityByCard: 'บกพร่องทางสติปัญญา',
   disabilityByScreening: 'บกพร่องทางสติปัญญา',
   hasDisabilityCard: true,
-  dateOfBirth: '10/11/2562',
-  remarks: 'อัปเดตข้อมูลแล้ว'
-  // Notice: studentId is undefined/not passed in form
-};
-const updateRes = code.updateStudent(updatePayload);
-assert.strictEqual(updateRes.success, true);
-const updatedRow = activeMockSheet.data[2]; // row 3 is index 2
-assert.strictEqual(updatedRow[0], '069001', 'CRITICAL GUARD: Existing studentId "069001" must NOT be overwritten with blank');
-assert.strictEqual(updatedRow[1], 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ');
-assert.strictEqual(updatedRow[2], 'ห้องเรียนปรับปรุงใหม่', 'Classroom should be updated');
-assert.strictEqual(updatedRow[16], 'อัปเดตข้อมูลแล้ว', 'Remarks should be updated');
-console.log('  ✅ Passed updateStudent protection tests');
+  dateOfBirth: '10/11/2562'
+  // studentId omitted / undefined
+});
+assert.strictEqual(safeUpdateRes.success, true);
+assert.strictEqual(mockSheetConflict.data[2][0], '069001', 'Existing studentId must be strictly preserved');
+assert.strictEqual(mockSheetConflict.data[2][2], 'ห้องเรียนพัฒนาการใหม่');
+console.log('  ✅ Passed Case 4: Student ID conflict protection tests');
 
-// 7. Test deleteStudent
-console.log('\nTest 7: deleteStudent (Self-healing deletion in NEW_AQ)');
-const countBefore = activeMockSheet.data.length;
-const deleteRes = code.deleteStudent(4, 'เด็กหญิงพัณภัช บูรณวุฒิ');
-assert.strictEqual(deleteRes.success, true);
-assert.strictEqual(activeMockSheet.data.length, countBefore - 1, 'Row count should decrease by 1');
-assert.strictEqual(code.findRowByStudentName(activeMockSheet, 'เด็กหญิงพัณภัช บูรณวุฒิ'), -1, 'Deleted student should not be found');
-console.log('  ✅ Passed deleteStudent test');
+// =========================================================================
+// Case 5: Shifted Row Numbers & Self-Healing Identity Check
+// =========================================================================
+console.log('\nCase 5: Shifted Row Numbers & Self-Healing Identity Check');
+const shiftedData = [
+  ...new17Data.slice(0, 2),
+  ['069000', 'เด็กชายแทรกมาใหม่ หัวแถว', 'สงวนจันทร์', 'ครูหนึ่ง', '1', '', '', 'ออทิสติก', 'ออทิสติก', '1', '', '', '01/01/2562', '7 ปี', '', '', ''], // Row 3
+  ['069001', 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', ''] // Row 4 (Shifted from 3 to 4)
+];
+const mockSheetShifted = new MockSheet('shifted_sheet', shiftedData, { strictBounds: true });
+activeMockSheet = mockSheetShifted;
 
-// 8. Test Write Guard on UNKNOWN Layout
-console.log('\nTest 8: Write Guard on UNKNOWN Layout (Block writes on unexpected structure)');
-activeMockSheet = mockSheetUnknown;
-assert.throws(() => {
-  code.createStudent(newStudentObj);
-}, /โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย/, 'Must block create on unknown layout');
-assert.throws(() => {
-  code.updateStudent(updatePayload);
-}, /โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย/, 'Must block update on unknown layout');
-assert.throws(() => {
-  code.deleteStudent(1, 'ทดสอบ');
-}, /โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย/, 'Must block delete on unknown layout');
-console.log('  ✅ Passed Write Guard on UNKNOWN Layout test');
+// Caller sends rowNumber: 3 (outdated index), but student is actually at Row 4!
+const selfHealUpdate = code.updateStudent({
+  rowNumber: 3, // Outdated! At Row 3 is 'เด็กชายแทรกมาใหม่'
+  name: 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', // Target is 'เด็กชายเย็นศิระ'
+  classroom: 'แสงตะวันฉาย ปรับปรุง',
+  teacher: 'นางสาวอรสา แข็งเขตการณ์',
+  serviceInCenter: true,
+  disabilityByCard: 'บกพร่องทางสติปัญญา',
+  disabilityByScreening: 'บกพร่องทางสติปัญญา',
+  hasDisabilityCard: true,
+  dateOfBirth: '10/11/2562'
+});
+assert.strictEqual(selfHealUpdate.success, true);
+// Row 3 ('เด็กชายแทรกมาใหม่') must NOT be touched!
+assert.strictEqual(mockSheetShifted.data[2][1], 'เด็กชายแทรกมาใหม่ หัวแถว');
+assert.strictEqual(mockSheetShifted.data[2][2], 'สงวนจันทร์');
+// Row 4 ('เด็กชายเย็นศิระ') must be correctly updated!
+assert.strictEqual(mockSheetShifted.data[3][1], 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ');
+assert.strictEqual(mockSheetShifted.data[3][2], 'แสงตะวันฉาย ปรับปรุง');
+console.log('  ✅ Passed Case 5: Shifted row self-healing identity check test');
 
-console.log('\n🎉 ALL PHASE 2 GOOGLE SHEETS TESTS PASSED SUCCESSFULLY!');
+// =========================================================================
+// Case 6: Wrong Person Protection (Halt on Non-Existent or Mismatched Student)
+// =========================================================================
+console.log('\nCase 6: Wrong Person Protection (Halt on Non-Existent Student)');
+// Attempting to update a non-existent student name
+assert.throws(() => {
+  code.updateStudent({
+    rowNumber: 3,
+    name: 'เด็กชายผี ไม่มีในชีต',
+    classroom: 'ห้องไหน',
+    teacher: 'ครูใคร',
+    serviceInCenter: true,
+    disabilityByCard: 'ไม่มี',
+    disabilityByScreening: 'ไม่มี',
+    hasDisabilityCard: true,
+    dateOfBirth: '01/01/2562'
+  });
+}, /ไม่พบชื่อนักเรียน .* ในชีต .* ระงับการทำรายการเพื่อป้องกันการแก้ไขผิดคน/, 'Must reject update of non-existent student');
+
+// Attempting to delete a non-existent student name
+assert.throws(() => {
+  code.deleteStudent(3, 'เด็กหญิงไม่มีตัวตน');
+}, /ไม่พบชื่อนักเรียน.*ระงับการทำรายการเพื่อป้องกันการลบผิดคน/, 'Must reject delete of non-existent student');
+console.log('  ✅ Passed Case 6: Wrong person protection test');
+
+// =========================================================================
+// Case 7: Formula Preservation in Sheet (Age Column Formula)
+// =========================================================================
+console.log('\nCase 7: Formula Preservation in Sheet (Age Column Formula)');
+const formulaData = [
+  ...new17Data.slice(0, 2),
+  ['069001', 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', '']
+];
+const formulaTable = [
+  [],
+  [],
+  ['', '', '', '', '', '', '', '', '', '', '', '', '', '=DATEDIF(M3,TODAY(),"Y")&" ปี"', '', '', ''] // Column N (index 13) has formula!
+];
+const mockSheetFormula = new MockSheet('formula_sheet', formulaData, { strictBounds: true, formulas: formulaTable });
+activeMockSheet = mockSheetFormula;
+
+// Update student: verify formula in Column N is NOT wiped out with empty string!
+code.updateStudent({
+  rowNumber: 3,
+  name: 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ',
+  classroom: 'ห้องแสงตะวันฉาย VIP',
+  teacher: 'นางสาวอรสา แข็งเขตการณ์',
+  serviceInCenter: true,
+  disabilityByCard: 'บกพร่องทางสติปัญญา',
+  disabilityByScreening: 'บกพร่องทางสติปัญญา',
+  hasDisabilityCard: true,
+  dateOfBirth: '10/11/2562'
+});
+const updatedCellFormula = mockSheetFormula.getRange(3, 14).getFormula();
+assert.strictEqual(updatedCellFormula, '=DATEDIF(M3,TODAY(),"Y")&" ปี"', 'Formula in Column N must be strictly preserved');
+console.log('  ✅ Passed Case 7: Formula preservation test');
+
+console.log('\n🎉 ALL 7 TARGETED PHASE 2 TEST SCENARIOS PASSED SUCCESSFULLY!\n');

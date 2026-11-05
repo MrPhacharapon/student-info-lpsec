@@ -157,69 +157,117 @@ function isCheckboxChecked(val) {
 
 /**
  * Detect sheet column layout (New 17-col A-Q with SET studentId vs Legacy 16-col A-P)
+ * Safe bounded range reading: NEVER reads beyond actual sheet dimensions.
+ * Header detection: Scans through multi-row title banners to identify the true table header row.
  * Prevents writes and incorrect column mapping if structure does not match expectations.
  */
 function detectSheetLayout(sheet) {
-  const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : 17;
-  const lastRow = sheet.getLastRow ? sheet.getLastRow() : 2;
-  const maxCols = Math.max(lastCol, 17);
-  const headerRows = Math.min(Math.max(lastRow, 1), 2);
-  const headerRange = sheet.getRange(1, 1, headerRows, maxCols);
+  const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : 0;
+  const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
+  if (lastRow < 1 || lastCol < 1) {
+    return {
+      type: 'UNKNOWN',
+      nameCol: null,
+      studentIdCol: null,
+      colCount: 0,
+      isAq: false,
+      headerRow: -1,
+      dataStartRow: 3
+    };
+  }
+
+  // Safety: NEVER read beyond actual sheet columns (bounds guard)
+  const scanRows = Math.min(lastRow, 10); // Scan up to first 10 rows for table header
+  const headerRange = sheet.getRange(1, 1, scanRows, lastCol);
   const displayValues = headerRange.getDisplayValues();
-  const row1 = displayValues[0] || [];
-  const col1 = (row1[0] || '').toString().trim();
-  const col2 = (row1[1] || '').toString().trim();
 
-  // If Column A header contains 'เลขประจำตัว' or 'รหัส'
-  if (/เลขประจำตัว|รหัส/i.test(col1)) {
-    return {
-      type: 'NEW_AQ',
-      nameCol: 2,       // Column B (1-based)
-      studentIdCol: 1,  // Column A (1-based)
-      colCount: 17,
-      isAq: true
-    };
-  }
+  for (let r = 0; r < scanRows; r++) {
+    const row = displayValues[r] || [];
+    let nameIdx = -1;
+    let studentIdIdx = -1;
 
-  // If Column A header contains 'ชื่อ' (legacy format)
-  if (/ชื่อ/i.test(col1)) {
-    return {
-      type: 'LEGACY_AP',
-      nameCol: 1,       // Column A (1-based)
-      studentIdCol: null,
-      colCount: 16,
-      isAq: false
-    };
-  }
+    for (let c = 0; c < row.length; c++) {
+      const cell = (row[c] || '').toString().trim();
+      // Match 'ชื่อ-สกุล', 'ชื่อ - สกุล', or 'ชื่อ' (excluding title banners like 'รายงานรายชื่อ...')
+      if (/ชื่อ\s*[-–—]?\s*สกุล|ชื่อนักเรียน/i.test(cell) || (cell === 'ชื่อ' || (cell.startsWith('ชื่อ') && !cell.includes('รายงาน')))) {
+        nameIdx = c;
+      }
+      if (/เลขประจำตัวนักเรียน|รหัสนักเรียน/i.test(cell) || (/เลขประจำตัว/i.test(cell) && !cell.includes('ประชาชน'))) {
+        studentIdIdx = c;
+      }
+    }
 
-  // Fallback: Check row 2 if row 1 is a merged title banner
-  const row2 = displayValues[1] || [];
-  const r2col1 = (row2[0] || '').toString().trim();
-  if (/เลขประจำตัว|รหัส/i.test(r2col1)) {
-    return {
-      type: 'NEW_AQ',
-      nameCol: 2,
-      studentIdCol: 1,
-      colCount: 17,
-      isAq: true
-    };
-  }
-  if (/ชื่อ/i.test(r2col1)) {
-    return {
-      type: 'LEGACY_AP',
-      nameCol: 1,
-      studentIdCol: null,
-      colCount: 16,
-      isAq: false
-    };
+    // Fallback if strict regex didn't catch: check if cell contains 'ชื่อ' and is not a whole report title banner
+    if (nameIdx === -1) {
+      for (let c = 0; c < row.length; c++) {
+        const cell = (row[c] || '').toString().trim();
+        if (/ชื่อ/i.test(cell) && cell.length < 25 && !cell.includes('รายงาน')) {
+          nameIdx = c;
+          break;
+        }
+      }
+    }
+
+    if (nameIdx !== -1) {
+      // Header row found (1-based index)
+      const headerRow = r + 1;
+
+      // Determine dataStartRow: check if the subsequent row is a sub-header (e.g. contains 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน')
+      let dataStartRow = headerRow + 1;
+      if (r + 1 < scanRows) {
+        const nextRow = displayValues[r + 1] || [];
+        const nextRowText = nextRow.join(' ');
+        if (/ในศูนย์|หน่วยบริการ|ปรับบ้าน/i.test(nextRowText)) {
+          dataStartRow = headerRow + 2;
+        }
+      }
+
+      // Check if studentId column is detected before name column
+      if (studentIdIdx !== -1 && studentIdIdx < nameIdx) {
+        // NEW_AQ layout (Column A = studentId, Column B = name)
+        return {
+          type: 'NEW_AQ',
+          nameCol: nameIdx + 1,           // 1-based (typically Col B = 2)
+          studentIdCol: studentIdIdx + 1, // 1-based (typically Col A = 1)
+          colCount: lastCol,
+          isAq: true,
+          headerRow: headerRow,
+          dataStartRow: dataStartRow
+        };
+      } else if (nameIdx === 0 || (nameIdx === 1 && studentIdIdx === -1 && /ลำดับ/i.test(row[0] || ''))) {
+        // LEGACY_AP layout (Column A = name, or Col A = order and Col B = name)
+        return {
+          type: 'LEGACY_AP',
+          nameCol: nameIdx + 1,
+          studentIdCol: null,
+          colCount: lastCol,
+          isAq: false,
+          headerRow: headerRow,
+          dataStartRow: dataStartRow
+        };
+      } else if (studentIdIdx !== -1) {
+        // studentId found elsewhere
+        return {
+          type: 'NEW_AQ',
+          nameCol: nameIdx + 1,
+          studentIdCol: studentIdIdx + 1,
+          colCount: lastCol,
+          isAq: true,
+          headerRow: headerRow,
+          dataStartRow: dataStartRow
+        };
+      }
+    }
   }
 
   return {
     type: 'UNKNOWN',
     nameCol: null,
     studentIdCol: null,
-    colCount: 0,
-    isAq: false
+    colCount: lastCol,
+    isAq: false,
+    headerRow: -1,
+    dataStartRow: 3
   };
 }
 
@@ -230,20 +278,25 @@ function detectSheetLayout(sheet) {
 function getStudentData() {
   const sheet = getDbSheet();
   const lastRow = sheet.getLastRow();
-  if (lastRow < 3) {
-    return [];
-  }
+  const lastCol = sheet.getLastColumn();
 
   const layout = detectSheetLayout(sheet);
   if (layout.type === 'UNKNOWN') {
     throw new Error("โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย (ตรวจไม่พบหัวตารางที่ถูกต้อง) ระงับการอ่านข้อมูลเพื่อความปลอดภัย");
   }
 
+  const startRow = layout.dataStartRow || 3;
+  if (lastRow < startRow) {
+    return [];
+  }
+
   const students = [];
+  const numRows = lastRow - startRow + 1;
 
   if (layout.type === 'NEW_AQ') {
-    // Read columns A to Q (17 columns)
-    const values = sheet.getRange(3, 1, lastRow - 2, 17).getDisplayValues();
+    // Read only up to lastCol (bounded to 17 columns)
+    const readCols = Math.min(lastCol, 17);
+    const values = sheet.getRange(startRow, 1, numRows, readCols).getDisplayValues();
 
     for (let i = 0; i < values.length; i++) {
       const row = values[i];
@@ -255,9 +308,9 @@ function getStudentData() {
         continue;
       }
 
-      // rowNumber is i + 3 (since index starts at 0, data starts at row 3)
+      // rowNumber is startRow + i
       students.push({
-        rowNumber: 3 + i,
+        rowNumber: startRow + i,
         studentId: studentId, // Preserves leading zero as string
         name: name,
         classroom: row[2] ? row[2].trim() : "",
@@ -278,8 +331,9 @@ function getStudentData() {
       });
     }
   } else {
-    // Legacy A-P: Read columns A to P (16 columns)
-    const values = sheet.getRange(3, 1, lastRow - 2, 16).getDisplayValues();
+    // Legacy A-P: Read only up to lastCol (bounded to 16 columns)
+    const readCols = Math.min(lastCol, 16);
+    const values = sheet.getRange(startRow, 1, numRows, readCols).getDisplayValues();
 
     for (let i = 0; i < values.length; i++) {
       const row = values[i];
@@ -291,7 +345,7 @@ function getStudentData() {
       }
 
       students.push({
-        rowNumber: 3 + i,
+        rowNumber: startRow + i,
         studentId: "",
         name: name,
         classroom: row[1] ? row[1].trim() : "",
@@ -322,15 +376,16 @@ function getStudentData() {
  */
 function findInsertionRow(sheet) {
   const lastRow = sheet.getLastRow();
-  if (lastRow < 3) return 3;
-
   const layout = detectSheetLayout(sheet);
+  const startRow = layout.dataStartRow || 3;
+  if (lastRow < startRow) return startRow;
+
   const nameCol = (layout && layout.nameCol) ? layout.nameCol : 2;
 
   const nameVals = sheet.getRange(1, nameCol, lastRow, 1).getValues();
   const col1Vals = (nameCol !== 1) ? sheet.getRange(1, 1, lastRow, 1).getValues() : nameVals;
 
-  for (let r = 2; r < lastRow; r++) {
+  for (let r = startRow - 1; r < lastRow; r++) {
     const nameVal = (nameVals[r] && nameVals[r][0] !== undefined && nameVals[r][0] !== null) ? nameVals[r][0].toString().trim() : "";
     const col1Val = (col1Vals[r] && col1Vals[r][0] !== undefined && col1Vals[r][0] !== null) ? col1Vals[r][0].toString().trim() : "";
 
@@ -346,19 +401,22 @@ function findInsertionRow(sheet) {
 
 /**
  * Find row index of student by name (for self-healing row mapping)
- * Dynamically uses layout.nameCol (Col B for New A-Q, Col A for Legacy A-P).
+ * Dynamically uses layout.nameCol and layout.dataStartRow.
  */
 function findRowByStudentName(sheet, name) {
   const lastRow = sheet.getLastRow();
-  if (lastRow < 3) return -1;
   const layout = detectSheetLayout(sheet);
   if (layout.type === 'UNKNOWN') return -1;
 
+  const startRow = layout.dataStartRow || 3;
+  if (lastRow < startRow) return -1;
+
   const nameCol = layout.nameCol;
-  const names = sheet.getRange(3, nameCol, lastRow - 2, 1).getValues().map(r => r[0] ? r[0].toString().trim() : "");
+  const numRows = lastRow - startRow + 1;
+  const names = sheet.getRange(startRow, nameCol, numRows, 1).getValues().map(r => r[0] ? r[0].toString().trim() : "");
   const index = names.indexOf(name.trim());
   if (index !== -1) {
-    return index + 3; // data starts at row 3
+    return index + startRow; // data starts at startRow
   }
   return -1;
 }
@@ -383,9 +441,11 @@ function validateStudentData(student, isEdit, sheet) {
   if (!isEdit && student.studentId && student.studentId.toString().trim() !== "") {
     const layout = detectSheetLayout(sheet);
     if (layout.type === 'NEW_AQ') {
+      const startRow = layout.dataStartRow || 3;
       const lastRow = sheet.getLastRow();
-      if (lastRow >= 3) {
-        const sidList = sheet.getRange(3, 1, lastRow - 2, 1).getValues().map(r => r[0] ? r[0].toString().trim() : "");
+      if (lastRow >= startRow) {
+        const numRows = lastRow - startRow + 1;
+        const sidList = sheet.getRange(startRow, 1, numRows, 1).getValues().map(r => r[0] ? r[0].toString().trim() : "");
         if (sidList.includes(student.studentId.toString().trim())) {
           throw new Error("รหัสนักเรียน '" + student.studentId.toString().trim() + "' มีอยู่ในฐานข้อมูลแล้ว ไม่สามารถสร้างซ้ำได้");
         }
@@ -420,6 +480,7 @@ function validateStudentData(student, isEdit, sheet) {
 /**
  * CREATE: Add a new student record
  * Safe studentId handling: does NOT invent IDs; writes blank string if unverified.
+ * Formula preservation: copies formula in age column from the row above if present.
  * Protects against writing if column structure is unexpected.
  */
 function createStudent(studentObj) {
@@ -440,6 +501,19 @@ function createStudent(studentObj) {
   // 3. Prepare values array (handle studentId safely without inventing IDs)
   const rawSid = (studentObj.studentId !== undefined && studentObj.studentId !== null) ? studentObj.studentId.toString().trim() : "";
 
+  const startRow = layout.dataStartRow || 3;
+  const ageCol = (layout.type === 'NEW_AQ') ? 14 : 13;
+
+  // Preserve formula from the row above if available
+  let ageValue = "";
+  if (insertRow > startRow) {
+    const rowAboveCell = sheet.getRange(insertRow - 1, ageCol);
+    const formulaAbove = rowAboveCell.getFormula ? rowAboveCell.getFormula() : "";
+    if (formulaAbove && formulaAbove.trim().startsWith('=')) {
+      ageValue = formulaAbove;
+    }
+  }
+
   if (layout.type === 'NEW_AQ') {
     const rowValues = [
       rawSid, // Column A: studentId (safe blank string if unverified)
@@ -455,7 +529,7 @@ function createStudent(studentObj) {
       studentObj.hasDisabilityCert ? 1 : "",
       studentObj.hasEducationScreening ? 1 : "",
       studentObj.dateOfBirth.trim(),
-      "", // age column (N) - write empty so sheet formulas can calculate it
+      ageValue, // age column (N) - preserves formula if present
       studentObj.disabledLater ? 1 : "",
       studentObj.nonThai ? 1 : "",
       studentObj.remarks ? studentObj.remarks.trim() : ""
@@ -476,7 +550,7 @@ function createStudent(studentObj) {
       studentObj.hasDisabilityCert ? 1 : "",
       studentObj.hasEducationScreening ? 1 : "",
       studentObj.dateOfBirth.trim(),
-      "", // age column (M)
+      ageValue, // age column (M)
       studentObj.disabledLater ? 1 : "",
       studentObj.nonThai ? 1 : "",
       studentObj.remarks ? studentObj.remarks.trim() : ""
@@ -492,9 +566,13 @@ function createStudent(studentObj) {
 }
 
 /**
- * UPDATE: Modify existing student record (with Self-Healing Row checks)
- * Crucial Guard: Existing Column A studentId is NEVER accidentally overwritten with blank.
- * Protects against writing if column structure is unexpected.
+ * UPDATE: Modify existing student record (with Identity Check & Self-Healing Row checks)
+ * Crucial Guard:
+ * 1. Verifies student identity; halts if student name does not match target row.
+ * 2. Existing Column A studentId is NEVER accidentally overwritten with blank.
+ * 3. If incoming studentId CONFLICTS with existing studentId, halts update to prevent mismatch.
+ * 4. Preserves existing formulas in the sheet (e.g. age calculation formula).
+ * 5. Protects against writing if column structure is unexpected.
  */
 function updateStudent(studentObj) {
   const sheet = getDbSheet();
@@ -508,33 +586,61 @@ function updateStudent(studentObj) {
   validateStudentData(studentObj, true, sheet);
 
   let targetRow = studentObj.rowNumber;
-  let nameInSheet = "";
+  let verifiedRow = -1;
+  const startRow = layout.dataStartRow || 3;
 
-  // Check if targetRow matches expectations (checking layout.nameCol)
-  if (targetRow >= 3 && targetRow <= sheet.getLastRow()) {
-    nameInSheet = sheet.getRange(targetRow, layout.nameCol).getValue().toString().trim();
+  // Identity Check: Verify if targetRow currently holds the student with this exact name
+  if (targetRow >= startRow && targetRow <= sheet.getLastRow()) {
+    const nameAtRow = sheet.getRange(targetRow, layout.nameCol).getValue().toString().trim();
+    if (nameAtRow === studentObj.name.trim()) {
+      verifiedRow = targetRow;
+    }
   }
 
-  // Self-healing: if index has shifted, look up the row using name
-  if (nameInSheet !== studentObj.name.trim()) {
-    targetRow = findRowByStudentName(sheet, studentObj.name);
-    if (targetRow === -1) {
-      throw new Error("ไม่พบชื่อนักเรียน '" + studentObj.name + "' ในชีต ระบบค้นหาแถวอัปเดตไม่สำเร็จ");
+  // Self-healing: if targetRow shifted or index moved, look up row using student name
+  if (verifiedRow === -1) {
+    const foundRow = findRowByStudentName(sheet, studentObj.name);
+    if (foundRow !== -1) {
+      verifiedRow = foundRow;
+    } else {
+      // Identity check failure: Cannot find student with this name!
+      throw new Error("ไม่พบชื่อนักเรียน '" + studentObj.name + "' ในชีต ระบบค้นหาแถวอัปเดตไม่สำเร็จ ระงับการทำรายการเพื่อป้องกันการแก้ไขผิดคน");
     }
+  }
+
+  targetRow = verifiedRow;
+
+  const ageCol = (layout.type === 'NEW_AQ') ? 14 : 13;
+  const ageCell = sheet.getRange(targetRow, ageCol);
+  const existingAgeFormula = ageCell.getFormula ? ageCell.getFormula() : "";
+  let ageValue = "";
+
+  if (existingAgeFormula && existingAgeFormula.trim().startsWith('=')) {
+    ageValue = existingAgeFormula; // Preserve formula!
+  } else {
+    const cellVal = ageCell.getValue();
+    ageValue = (cellVal !== undefined && cellVal !== null) ? cellVal : "";
   }
 
   if (layout.type === 'NEW_AQ') {
-    // Preserve existing studentId in Column A if not explicitly provided or blank
+    // Read existing Column A
     const existingColA = sheet.getRange(targetRow, 1).getValue();
-    let finalStudentId = (existingColA !== undefined && existingColA !== null) ? existingColA.toString().trim() : "";
+    const existingStudentId = (existingColA !== undefined && existingColA !== null) ? existingColA.toString().trim() : "";
+    const incomingStudentId = (studentObj.studentId !== undefined && studentObj.studentId !== null) ? studentObj.studentId.toString().trim() : "";
 
-    // Only update studentId if a non-empty new studentId is explicitly passed
-    if (studentObj.studentId !== undefined && studentObj.studentId !== null && studentObj.studentId.toString().trim() !== "") {
-      finalStudentId = studentObj.studentId.toString().trim();
+    // CONFLICT GUARD: If existing studentId is set, and incoming studentId differs -> HALT!
+    if (existingStudentId !== "" && incomingStudentId !== "" && incomingStudentId !== existingStudentId) {
+      throw new Error("รหัสนักเรียนที่ส่งมา ('" + incomingStudentId + "') ขัดแย้งกับรหัสเดิมในฐานข้อมูล ('" + existingStudentId + "') ระงับการแก้ไขข้อมูลเพื่อความปลอดภัย");
+    }
+
+    let finalStudentId = existingStudentId;
+    // If no existing ID, allow setting incoming ID
+    if (existingStudentId === "" && incomingStudentId !== "") {
+      finalStudentId = incomingStudentId;
     }
 
     const rowValues = [
-      finalStudentId, // Column A: preserved or verified update
+      finalStudentId, // Column A: preserved or verified update (never overwritten with blank)
       studentObj.name.trim(),
       studentObj.classroom.trim(),
       studentObj.teacher.trim(),
@@ -547,7 +653,7 @@ function updateStudent(studentObj) {
       studentObj.hasDisabilityCert ? 1 : "",
       studentObj.hasEducationScreening ? 1 : "",
       studentObj.dateOfBirth.trim(),
-      "", // age column (N)
+      ageValue, // Column N: preserves existing formula or value
       studentObj.disabledLater ? 1 : "",
       studentObj.nonThai ? 1 : "",
       studentObj.remarks ? studentObj.remarks.trim() : ""
@@ -569,7 +675,7 @@ function updateStudent(studentObj) {
       studentObj.hasDisabilityCert ? 1 : "",
       studentObj.hasEducationScreening ? 1 : "",
       studentObj.dateOfBirth.trim(),
-      "", // age column (M)
+      ageValue, // Column M: preserves formula or value
       studentObj.disabledLater ? 1 : "",
       studentObj.nonThai ? 1 : "",
       studentObj.remarks ? studentObj.remarks.trim() : ""
@@ -586,8 +692,8 @@ function updateStudent(studentObj) {
 }
 
 /**
- * DELETE: Remove a student record (with Self-Healing Row checks)
- * Uses layout.nameCol and protects against writing if structure is unexpected.
+ * DELETE: Remove a student record (with Identity Check & Self-Healing Row checks)
+ * Uses layout.nameCol, verifies identity, and protects against writing if structure is unexpected.
  */
 function deleteStudent(rowNumber, studentName) {
   const sheet = getDbSheet();
@@ -597,24 +703,30 @@ function deleteStudent(rowNumber, studentName) {
     throw new Error("โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย ระงับการลบข้อมูลเพื่อความปลอดภัย");
   }
 
+  const startRow = layout.dataStartRow || 3;
   let targetRow = rowNumber;
-  let nameInSheet = "";
+  let verifiedRow = -1;
 
-  // Verify name in target row using layout.nameCol
-  if (targetRow >= 3 && targetRow <= sheet.getLastRow()) {
-    nameInSheet = sheet.getRange(targetRow, layout.nameCol).getValue().toString().trim();
-  }
-
-  // Self-healing: lookup by name if shifted
-  if (nameInSheet !== studentName.trim()) {
-    targetRow = findRowByStudentName(sheet, studentName);
-    if (targetRow === -1) {
-      throw new Error("ไม่พบชื่อนักเรียน '" + studentName + "' ในชีต ไม่สามารถทำการลบได้");
+  // 1. Verify name in target row using layout.nameCol
+  if (targetRow >= startRow && targetRow <= sheet.getLastRow()) {
+    const nameInSheet = sheet.getRange(targetRow, layout.nameCol).getValue().toString().trim();
+    if (nameInSheet === studentName.trim()) {
+      verifiedRow = targetRow;
     }
   }
 
-  // Delete row
-  sheet.deleteRow(targetRow);
+  // 2. Self-healing: lookup by name if shifted
+  if (verifiedRow === -1) {
+    const foundRow = findRowByStudentName(sheet, studentName);
+    if (foundRow !== -1) {
+      verifiedRow = foundRow;
+    } else {
+      throw new Error("ไม่พบชื่อนักเรียน '" + studentName + "' ในชีต ไม่สามารถทำการลบได้ (ระงับการทำรายการเพื่อป้องกันการลบผิดคน)");
+    }
+  }
+
+  // Delete row safely
+  sheet.deleteRow(verifiedRow);
 
   return {
     success: true,
