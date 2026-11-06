@@ -403,4 +403,226 @@ const updatedCellFormula = mockSheetFormula.getRange(3, 14).getFormula();
 assert.strictEqual(updatedCellFormula, '=DATEDIF(M3,TODAY(),"Y")&" ปี"', 'Formula in Column N must be strictly preserved');
 console.log('  ✅ Passed Case 7: Formula preservation test');
 
-console.log('\n🎉 ALL 7 TARGETED PHASE 2 TEST SCENARIOS PASSED SUCCESSFULLY!\n');
+// =========================================================================
+// Case 8: createStudent() - Formula Row Reference Dynamic Adjustment
+// =========================================================================
+console.log('\nCase 8: createStudent() - Formula Row Reference Dynamic Adjustment');
+const formulaDataForCreate = [
+  ...new17Data.slice(0, 2),
+  ['069001', 'เด็กชายเย็นศิระ วงศ์เราประเสริฐ', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', '']
+];
+const formulaTableForCreate = [
+  [],
+  [],
+  ['', '', '', '', '', '', '', '', '', '', '', '', '', '=DATEDIF(M3,TODAY(),"Y")&" ปี "&DATEDIF(M3,$Z$1,"YM")&" เดือน"', '', '', '']
+];
+const mockSheetCreateFormula = new MockSheet('create_formula_sheet', formulaDataForCreate, { strictBounds: true, formulas: formulaTableForCreate });
+activeMockSheet = mockSheetCreateFormula;
+
+// Inserting new student at Row 4 (row above is Row 3, with formula referring to M3 and absolute $Z$1)
+const createRes = code.createStudent({
+  studentId: '069005',
+  name: 'เด็กหญิงน้องใหม่ ไดนามิกสูตร',
+  classroom: 'แสงตะวันฉาย',
+  teacher: 'นางสาวอรสา แข็งเขตการณ์',
+  serviceInCenter: true,
+  disabilityByCard: 'ออทิสติก',
+  disabilityByScreening: 'ออทิสติก',
+  hasDisabilityCard: true,
+  dateOfBirth: '15/05/2563'
+});
+assert.strictEqual(createRes.success, true);
+const newRowFormula = mockSheetCreateFormula.getRange(4, 14).getFormula();
+assert.strictEqual(
+  newRowFormula,
+  '=DATEDIF(M4,TODAY(),"Y")&" ปี "&DATEDIF(M4,$Z$1,"YM")&" เดือน"',
+  'Age formula in new Row 4 must dynamically adjust M3 to M4 while preserving absolute $Z$1'
+);
+
+// Also verify Legacy sheet (Column L = DOB, Column M = Age)
+const legacyDataForCreate = [
+  ...legacy16Data.slice(0, 2),
+  ['เด็กชายดั้งเดิม รักเรียน', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', '']
+];
+const legacyFormulaTable = [
+  [],
+  [],
+  ['', '', '', '', '', '', '', '', '', '', '', '', '=DATEDIF(L3,TODAY(),"Y")&" ปี"', '', '', '']
+];
+const mockLegacyCreate = new MockSheet('legacy_create_sheet', legacyDataForCreate, { strictBounds: true, formulas: legacyFormulaTable });
+activeMockSheet = mockLegacyCreate;
+
+const legacyCreateRes = code.createStudent({
+  name: 'เด็กหญิงน้องใหม่ เลกาซี',
+  classroom: 'แสงตะวันฉาย',
+  teacher: 'นางสาวอรสา แข็งเขตการณ์',
+  serviceInCenter: true,
+  disabilityByCard: 'ออทิสติก',
+  disabilityByScreening: 'ออทิสติก',
+  hasDisabilityCard: true,
+  dateOfBirth: '15/05/2563'
+});
+assert.strictEqual(legacyCreateRes.success, true);
+const legacyNewFormula = mockLegacyCreate.getRange(4, 13).getFormula();
+assert.strictEqual(
+  legacyNewFormula,
+  '=DATEDIF(L4,TODAY(),"Y")&" ปี"',
+  'Age formula in Legacy Row 4 must dynamically adjust L3 to L4'
+);
+console.log('  ✅ Passed Case 8: createStudent formula reference adjustment test');
+
+// =========================================================================
+// Case 9: Subheader Detection vs Classroom containing "หน่วยบริการ"
+// =========================================================================
+console.log('\nCase 9: Subheader Detection vs Classroom containing "หน่วยบริการ"');
+// A sheet where there is NO subheader row, and the very first student row has classroom = 'หน่วยบริการเมืองลำปาง'
+const sheetWithNoSubheader = [
+  ['เลขประจำตัวนักเรียน', 'ชื่อ-สกุล', 'ห้องเรียน', 'ครูผู้รับผิดชอบ', 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน', 'ตามบัตร', 'ตามคัดกรอง', 'บัตร', 'ใบรับรอง', 'คัดกรอง', 'วันเกิด', 'อายุ', 'พิการภายหลัง', 'ไม่ใช่ไทย', 'หมายเหตุ'], // Row 1: Header
+  ['069020', 'เด็กชายหนึ่ง หน่วยบริการ', 'หน่วยบริการเมืองลำปาง', 'ครูสมปอง', '', '1', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', ''] // Row 2: Student!
+];
+const mockNoSubheader = new MockSheet('no_subheader_sheet', sheetWithNoSubheader, { strictBounds: true });
+activeMockSheet = mockNoSubheader;
+
+const layoutNoSubheader = code.detectSheetLayout(mockNoSubheader);
+assert.strictEqual(layoutNoSubheader.headerRow, 1, 'Header at Row 1');
+assert.strictEqual(layoutNoSubheader.dataStartRow, 2, 'dataStartRow must be 2 (Row 2 is a student, NOT a subheader!)');
+
+const studentsNoSubheader = code.getStudentData();
+assert.strictEqual(studentsNoSubheader.length, 1, 'Student in Row 2 must NOT be skipped!');
+assert.strictEqual(studentsNoSubheader[0].name, 'เด็กชายหนึ่ง หน่วยบริการ');
+assert.strictEqual(studentsNoSubheader[0].classroom, 'หน่วยบริการเมืองลำปาง');
+console.log('  ✅ Passed Case 9: True subheader detection test');
+
+// =========================================================================
+// Case 10: Reject Unsupported Column Layouts as UNKNOWN
+// =========================================================================
+console.log('\nCase 10: Reject Unsupported Column Layouts as UNKNOWN');
+// Layout with Name at Column 4 (Col D) instead of Col A or B
+const unsupportedLayoutData = [
+  ['ลำดับ', 'รหัสประจำตัว', 'ห้องเรียน', 'ชื่อ-สกุล', 'ครู', 'ในศูนย์', 'หน่วยบริการ', 'ปรับบ้าน', 'บัตร', 'คัดกรอง', 'บัตร', 'ใบรับรอง', 'คัดกรอง', 'วันเกิด', 'อายุ', 'พิการ', 'หมายเหตุ'],
+  ['1', '069001', 'ห้อง 1', 'เด็กชายผิดผัง คอลัมน์', 'ครู', '1', '', '', '', '', '', '', '', '01/01/2563', '6 ปี', '', '']
+];
+const mockUnsupported = new MockSheet('unsupported_sheet', unsupportedLayoutData, { strictBounds: true });
+activeMockSheet = mockUnsupported;
+
+const layoutUnsupported = code.detectSheetLayout(mockUnsupported);
+assert.strictEqual(layoutUnsupported.type, 'UNKNOWN', 'Must reject unsupported layout as UNKNOWN');
+assert.strictEqual(layoutUnsupported.reason, 'ผังคอลัมน์ไม่ตรงกับตำแหน่งที่ getStudentData() รองรับ');
+
+// Verify getStudentData(), createStudent(), and updateStudent() reject writes on unsupported layout
+assert.throws(() => {
+  code.getStudentData();
+}, /โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย/, 'Must reject getStudentData on unsupported layout');
+
+assert.throws(() => {
+  code.createStudent({
+    name: 'เด็กชายพยายามเขียน',
+    classroom: 'ห้อง 1',
+    teacher: 'ครู',
+    serviceInCenter: true,
+    dateOfBirth: '01/01/2563'
+  });
+}, /โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย/, 'Must reject createStudent on unsupported layout');
+
+assert.throws(() => {
+  code.updateStudent({
+    rowNumber: 2,
+    name: 'เด็กชายผิดผัง คอลัมน์',
+    classroom: 'ห้อง 1',
+    teacher: 'ครู',
+    serviceInCenter: true,
+    dateOfBirth: '01/01/2563'
+  });
+}, /โครงสร้างคอลัมน์ของชีตไม่ตรงตามที่คาดหมาย/, 'Must reject updateStudent on unsupported layout');
+console.log('  ✅ Passed Case 10: Unsupported layout rejection test');
+
+// =========================================================================
+// Case 11: Duplicate Names & Ambiguous Identity Protection
+// =========================================================================
+console.log('\nCase 11: Duplicate Names & Ambiguous Identity Protection');
+const duplicateNameData = [
+  ...new17Data.slice(0, 2),
+  ['069011', 'เด็กชายสมชาย ใจดี', 'แสงตะวันฉาย', 'นางสาวอรสา แข็งเขตการณ์', '1', '', '', 'บกพร่องทางสติปัญญา', 'บกพร่องทางสติปัญญา', '1', '', '', '10/11/2562', '6 ปี 11 เดือน', '', '', 'หมายเหตุแถว 3'], // Row 3
+  ['069012', 'เด็กชายสมชาย ใจดี', 'มุ่งสู่ดวงดาว', 'นางสาวสุพัตรา นามวงค์', '', '1', '', 'ออทิสติก', 'ออทิสติก', '1', '', '', '01/05/2562', '7 ปี 5 เดือน', '', '', 'หมายเหตุแถว 4']  // Row 4 (Same Name!)
+];
+const mockDuplicateSheet = new MockSheet('duplicate_sheet', duplicateNameData, { strictBounds: true });
+activeMockSheet = mockDuplicateSheet;
+
+// 11.1 updateStudent without studentId must HALT immediately
+assert.throws(() => {
+  code.updateStudent({
+    rowNumber: 3,
+    name: 'เด็กชายสมชาย ใจดี',
+    classroom: 'แก้ไขห้องเรียน',
+    teacher: 'ครูทดสอบ',
+    serviceInCenter: true,
+    dateOfBirth: '10/11/2562'
+    // studentId omitted!
+  });
+}, /พบชื่อนักเรียนซ้ำกัน 2 รายการ.*กรุณาระบุรหัสนักเรียน SET.*เพื่อยืนยันตัวตน/, 'Must halt update when student name is ambiguous and studentId is missing');
+
+// 11.2 deleteStudent without studentId must HALT immediately
+assert.throws(() => {
+  code.deleteStudent(3, 'เด็กชายสมชาย ใจดี');
+}, /พบชื่อนักเรียนซ้ำกัน 2 รายการ.*กรุณาระบุรหัสนักเรียน SET.*เพื่อยืนยันตัวตน/, 'Must halt delete when student name is ambiguous and studentId is missing');
+
+// 11.3 updateStudent with unmatched studentId must HALT
+assert.throws(() => {
+  code.updateStudent({
+    rowNumber: 3,
+    studentId: '069099', // Non-matching ID!
+    name: 'เด็กชายสมชาย ใจดี',
+    classroom: 'แก้ไขห้องเรียน',
+    teacher: 'ครูทดสอบ',
+    serviceInCenter: true,
+    dateOfBirth: '10/11/2562'
+  });
+}, /พบชื่อนักเรียนซ้ำกัน 2 รายการ.*แต่ไม่มีแถวใดตรงกับรหัสนักเรียน SET/, 'Must halt update when studentId does not match any duplicate candidate');
+
+// 11.4 updateStudent with verified studentId '069012' must update Row 4 only
+const updateResDup = code.updateStudent({
+  rowNumber: 3, // Outdated reportedRow points to Row 3, but studentId '069012' targets Row 4!
+  studentId: '069012',
+  name: 'เด็กชายสมชาย ใจดี',
+  classroom: 'มุ่งสู่ดวงดาว VIP',
+  teacher: 'นางสาวสุพัตรา นามวงค์',
+  serviceUnit: true,
+  dateOfBirth: '01/05/2562'
+});
+assert.strictEqual(updateResDup.success, true);
+// Row 3 must NOT be touched
+assert.strictEqual(mockDuplicateSheet.data[2][0], '069011');
+assert.strictEqual(mockDuplicateSheet.data[2][2], 'แสงตะวันฉาย');
+// Row 4 must be updated
+assert.strictEqual(mockDuplicateSheet.data[3][0], '069012');
+assert.strictEqual(mockDuplicateSheet.data[3][2], 'มุ่งสู่ดวงดาว VIP');
+
+// 11.5 deleteStudent with verified studentId '069011' must delete Row 3 safely
+const deleteResDup = code.deleteStudent(99, 'เด็กชายสมชาย ใจดี', '069011');
+assert.strictEqual(deleteResDup.success, true);
+// Now only 1 student remains ('069012')
+assert.strictEqual(mockDuplicateSheet.getLastRow(), 3); // 2 header rows + 1 remaining student
+assert.strictEqual(mockDuplicateSheet.data[2][0], '069012');
+
+// 11.6 Duplicate names in Legacy sheet (where no SET ID exists to disambiguate) must HALT
+const legacyDupData = [
+  ...legacy16Data.slice(0, 2),
+  ['เด็กหญิงชื่อซ้ำ เลกาซี', 'แสงตะวันฉาย', 'ครูหนึ่ง', '1', '', '', '', '', '', '', '', '10/11/2562', '6 ปี', '', '', ''],
+  ['เด็กหญิงชื่อซ้ำ เลกาซี', 'มุ่งสู่ดวงดาว', 'ครูสอง', '', '1', '', '', '', '', '', '', '01/01/2563', '6 ปี', '', '', '']
+];
+const mockLegacyDup = new MockSheet('legacy_dup_sheet', legacyDupData, { strictBounds: true });
+activeMockSheet = mockLegacyDup;
+
+assert.throws(() => {
+  code.updateStudent({
+    rowNumber: 3,
+    name: 'เด็กหญิงชื่อซ้ำ เลกาซี',
+    classroom: 'แก้ห้อง',
+    teacher: 'ครู',
+    serviceInCenter: true,
+    dateOfBirth: '10/11/2562'
+  });
+}, /พบชื่อนักเรียนซ้ำกัน 2 รายการ.*และชีตไม่มีคอลัมน์รหัสนักเรียน SET/, 'Must halt update on Legacy duplicate names');
+console.log('  ✅ Passed Case 11: Duplicate names and ambiguous identity protection test');
+
+console.log('\n🎉 ALL 11 TARGETED PHASE 2 TEST SCENARIOS PASSED SUCCESSFULLY!\n');
