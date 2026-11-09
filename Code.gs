@@ -61,6 +61,376 @@ function doGet(e) {
   }
 }
 
+// =========================================================================
+// Security & Authentication Helpers (Fail-Closed, Salted PBKDF2, HMAC Session)
+// =========================================================================
+
+/**
+ * Constant-time string equality check to prevent timing side-channel attacks
+ */
+function constantTimeEquals(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Cryptographically strong or pseudo-random hex generator
+ */
+function generateRandomHex(byteCount) {
+  if (typeof crypto !== 'undefined' && crypto.randomBytes) {
+    return crypto.randomBytes(byteCount).toString('hex');
+  }
+  let hex = '';
+  for (let i = 0; i < byteCount; i++) {
+    const r = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+    hex += r;
+  }
+  return hex;
+}
+
+/**
+ * Compute HMAC-SHA256 hex string (compatible with Google Apps Script & Node.js)
+ */
+function computeHmacSha256Hex(messageStr, keyStr) {
+  if (typeof crypto !== 'undefined' && crypto.createHmac) {
+    return crypto.createHmac('sha256', keyStr).update(messageStr).digest('hex');
+  }
+  if (typeof Utilities !== 'undefined' && Utilities.computeHmacSha256Signature) {
+    const rawBytes = Utilities.computeHmacSha256Signature(messageStr, keyStr);
+    return rawBytes.map(b => (b < 0 ? b + 256 : b).toString(16).padStart(2, '0')).join('');
+  }
+  const enc = new TextEncoder();
+  const rawBytes = hmacSha256Pure(enc.encode(keyStr), enc.encode(messageStr));
+  return Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Hex string to Uint8Array helper
+ */
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+/**
+ * Compute PBKDF2-HMAC-SHA256 in hex
+ */
+function computePbkdf2HmacSha256Hex(passwordStr, saltHex, iterations) {
+  if (typeof crypto !== 'undefined' && crypto.pbkdf2Sync) {
+    return crypto.pbkdf2Sync(passwordStr, Buffer.from(saltHex, 'hex'), iterations, 32, 'sha256').toString('hex');
+  }
+  return pbkdf2HmacSha256Pure(passwordStr, hexToBytes(saltHex), iterations);
+}
+
+/**
+ * Pure JS SHA-256 implementation (compatible with any V8 / Apps Script environment)
+ */
+function sha256Pure(bytes) {
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+
+  const H = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  ];
+
+  const len = bytes.length;
+  const bitLen = len * 8;
+  const padLen = (len % 64 < 56) ? (56 - len % 64) : (120 - len % 64);
+  const totalLen = len + padLen + 8;
+  const buf = new Uint8Array(totalLen);
+  buf.set(bytes);
+  buf[len] = 0x80;
+
+  const view = new DataView(buf.buffer);
+  view.setUint32(totalLen - 4, bitLen, false);
+
+  const w = new Int32Array(64);
+
+  for (let i = 0; i < totalLen; i += 64) {
+    for (let j = 0; j < 16; j++) {
+      w[j] = view.getInt32(i + (j * 4), false);
+    }
+    for (let j = 16; j < 64; j++) {
+      const s0 = ((w[j - 15] >>> 7) | (w[j - 15] << 25)) ^ ((w[j - 15] >>> 18) | (w[j - 15] << 14)) ^ (w[j - 15] >>> 3);
+      const s1 = ((w[j - 2] >>> 17) | (w[j - 2] << 15)) ^ ((w[j - 2] >>> 19) | (w[j - 2] << 13)) ^ (w[j - 2] >>> 10);
+      w[j] = (w[j - 16] + s0 + w[j - 7] + s1) | 0;
+    }
+
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+
+    for (let j = 0; j < 64; j++) {
+      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+      const ch = (e & f) ^ ((~e) & g);
+      const temp1 = (h + S1 + ch + K[j] + w[j]) | 0;
+      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) | 0;
+
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) | 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) | 0;
+    }
+
+    H[0] = (H[0] + a) | 0;
+    H[1] = (H[1] + b) | 0;
+    H[2] = (H[2] + c) | 0;
+    H[3] = (H[3] + d) | 0;
+    H[4] = (H[4] + e) | 0;
+    H[5] = (H[5] + f) | 0;
+    H[6] = (H[6] + g) | 0;
+    H[7] = (H[7] + h) | 0;
+  }
+
+  const out = new Uint8Array(32);
+  const outView = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) {
+    outView.setInt32(i * 4, H[i], false);
+  }
+  return out;
+}
+
+/**
+ * Pure JS HMAC-SHA256
+ */
+function hmacSha256Pure(keyBytes, msgBytes) {
+  let k = keyBytes;
+  if (k.length > 64) {
+    k = sha256Pure(k);
+  }
+  const keyPad = new Uint8Array(64);
+  keyPad.set(k);
+
+  const oKeyPad = new Uint8Array(64);
+  const iKeyPad = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) {
+    oKeyPad[i] = keyPad[i] ^ 0x5c;
+    iKeyPad[i] = keyPad[i] ^ 0x36;
+  }
+
+  const innerBuf = new Uint8Array(64 + msgBytes.length);
+  innerBuf.set(iKeyPad, 0);
+  innerBuf.set(msgBytes, 64);
+  const innerHash = sha256Pure(innerBuf);
+
+  const outerBuf = new Uint8Array(64 + 32);
+  outerBuf.set(oKeyPad, 0);
+  outerBuf.set(innerHash, 64);
+  return sha256Pure(outerBuf);
+}
+
+/**
+ * Pure JS PBKDF2-HMAC-SHA256
+ */
+function pbkdf2HmacSha256Pure(passwordStr, saltBytes, iterations) {
+  const enc = new TextEncoder();
+  const pwdBytes = enc.encode(passwordStr);
+  const saltBuf = new Uint8Array(saltBytes.length + 4);
+  saltBuf.set(saltBytes, 0);
+  saltBuf[saltBytes.length + 3] = 1;
+
+  let u = hmacSha256Pure(pwdBytes, saltBuf);
+  const t = new Uint8Array(u);
+
+  for (let c = 1; c < iterations; c++) {
+    u = hmacSha256Pure(pwdBytes, u);
+    for (let k = 0; k < 32; k++) {
+      t[k] ^= u[k];
+    }
+  }
+
+  return Array.from(t).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Fail-Closed Write Safety Guard
+ * Rejects any write mutation immediately if ENABLE_WRITES is missing or not strictly 'true'.
+ */
+function checkWritesEnabled(props) {
+  const enableWrites = props ? props.getProperty('ENABLE_WRITES') : null;
+  if (enableWrites !== 'true') {
+    const err = new Error("ระบบอยู่ในโหมดปิดรับการบันทึกข้อมูล (Fail-Closed: ENABLE_WRITES != true) ระงับการทำรายการเพื่อความปลอดภัย");
+    err.code = 'WRITES_DISABLED';
+    throw err;
+  }
+}
+
+/**
+ * Generates an ephemeral signed admin session token (15-minute TTL)
+ */
+function generateAdminSessionToken(props, customTimestamp) {
+  const timestamp = (customTimestamp !== undefined ? customTimestamp : Date.now()).toString();
+  const nonce = generateRandomHex(16);
+  const tokenEpoch = (props && props.getProperty('TOKEN_EPOCH')) || '1';
+  const hmacSecret = (props && props.getProperty('ADMIN_HMAC_SECRET')) || 'default-staging-hmac-secret';
+
+  const dataToSign = `${timestamp}:${nonce}:${tokenEpoch}`;
+  const sig = computeHmacSha256Hex(dataToSign, hmacSecret);
+  return `${timestamp}.${nonce}.${tokenEpoch}.${sig}`;
+}
+
+/**
+ * Validates admin write authorization token
+ */
+function validateWriteAuth(request, props) {
+  checkWritesEnabled(props);
+
+  const token = (request && (request.token || (request.payload && request.payload.token)))
+    ? (request.token || request.payload.token).toString().trim()
+    : '';
+  if (!token) {
+    const err = new Error("ไม่พบ Session Token สำหรับยืนยันตัวตนผู้ดูแลระบบ (Unauthorized: Missing Token)");
+    err.code = 'UNAUTHORIZED';
+    throw err;
+  }
+
+  const parts = token.split('.');
+  if (parts.length !== 4) {
+    const err = new Error("Session Token รูปแบบไม่ถูกต้อง (Unauthorized: Invalid Token Format)");
+    err.code = 'UNAUTHORIZED';
+    throw err;
+  }
+
+  const [timestamp, nonce, tokenEpoch, sig] = parts;
+  const tokenTime = parseInt(timestamp, 10);
+  const now = Date.now();
+  const maxAge = 15 * 60 * 1000; // 15 minutes
+
+  if (isNaN(tokenTime) || (now - tokenTime > maxAge) || (tokenTime > now + 60000)) {
+    const err = new Error("เซสชันผู้ดูแลระบบหมดอายุแล้ว กรุณาเข้าสู่ระบบใหม่ (Unauthorized: Session Expired)");
+    err.code = 'SESSION_EXPIRED';
+    throw err;
+  }
+
+  const currentEpoch = (props && props.getProperty('TOKEN_EPOCH')) || '1';
+  if (tokenEpoch !== currentEpoch) {
+    const err = new Error("เซสชันผู้ดูแลระบบถูกเพิกถอนแล้ว กรุณาเข้าสู่ระบบใหม่ (Unauthorized: Session Revoked)");
+    err.code = 'SESSION_REVOKED';
+    throw err;
+  }
+
+  const hmacSecret = (props && props.getProperty('ADMIN_HMAC_SECRET')) || 'default-staging-hmac-secret';
+  const dataToSign = `${timestamp}:${nonce}:${tokenEpoch}`;
+  const expectedSig = computeHmacSha256Hex(dataToSign, hmacSecret);
+
+  if (!constantTimeEquals(sig, expectedSig)) {
+    const err = new Error("Session Token ลายเซ็นไม่ถูกต้องหรือถูกดัดแปลง (Unauthorized: Tampered Token)");
+    err.code = 'UNAUTHORIZED';
+    throw err;
+  }
+
+  return true;
+}
+
+/**
+ * Handles administrator password verification (PBKDF2 salted hash comparison)
+ */
+function handleAdminLogin(payload, props) {
+  if (!props) {
+    props = PropertiesService.getScriptProperties();
+  }
+
+  const password = (payload && payload.password) ? payload.password.toString() : '';
+  if (!password) {
+    return { valid: false, code: 'INVALID_CREDENTIALS', message: 'กรุณากรอกรหัสผ่านผู้ดูแลระบบ' };
+  }
+
+  const storedHash = props ? props.getProperty('ADMIN_PASSWORD_PBKDF2') : null;
+  if (!storedHash) {
+    const err = new Error("ระบบยังไม่ได้ตั้งค่ารหัสผ่านผู้ดูแลระบบ (ADMIN_PASSWORD_PBKDF2) ใน Script Properties");
+    err.code = 'AUTH_NOT_CONFIGURED';
+    throw err;
+  }
+
+  const parts = storedHash.split('$');
+  if (parts.length !== 4 || parts[0] !== 'pbkdf2_sha256') {
+    const err = new Error("รูปแบบรหัสผ่านที่จัดเก็บบนเซิร์ฟเวอร์ไม่ถูกต้อง");
+    err.code = 'AUTH_CONFIG_ERROR';
+    throw err;
+  }
+
+  const iterations = parseInt(parts[1], 10);
+  const saltHex = parts[2];
+  const expectedHashHex = parts[3];
+
+  const computedHashHex = computePbkdf2HmacSha256Hex(password, saltHex, iterations);
+
+  if (!constantTimeEquals(computedHashHex, expectedHashHex)) {
+    return { valid: false, code: 'INVALID_CREDENTIALS', message: 'รหัสผ่านผู้ดูแลระบบไม่ถูกต้อง' };
+  }
+
+  const token = generateAdminSessionToken(props);
+  return {
+    valid: true,
+    token: token,
+    expiresInSeconds: 900,
+    expiresAt: Date.now() + 900 * 1000,
+    message: "เข้าสู่ระบบผู้ดูแลระบบสำเร็จ"
+  };
+}
+
+/**
+ * Handles administrator logout (Session Revocation via TOKEN_EPOCH bump)
+ */
+function handleAdminLogout(props) {
+  const currentEpoch = (props && props.getProperty('TOKEN_EPOCH')) || '1';
+  const nextEpoch = (parseInt(currentEpoch, 10) + 1).toString();
+  if (props) {
+    props.setProperty('TOKEN_EPOCH', nextEpoch);
+  }
+  return {
+    success: true,
+    message: "ออกจากระบบและเพิกถอนเซสชันเรียบร้อยแล้ว"
+  };
+}
+
+/**
+ * Server Setup Helper: securely derives and saves PBKDF2 salt & hash into ScriptProperties
+ */
+function setupAdminPassword(newPassword, iterations = 100000) {
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+    throw new Error("รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร");
+  }
+  const saltHex = generateRandomHex(16);
+  const hashHex = computePbkdf2HmacSha256Hex(newPassword, saltHex, iterations);
+  const storedValue = `pbkdf2_sha256$${iterations}$${saltHex}$${hashHex}`;
+
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('ADMIN_PASSWORD_PBKDF2', storedValue);
+  if (!props.getProperty('ADMIN_HMAC_SECRET')) {
+    props.setProperty('ADMIN_HMAC_SECRET', generateRandomHex(32));
+  }
+  if (!props.getProperty('TOKEN_EPOCH')) {
+    props.setProperty('TOKEN_EPOCH', '1');
+  }
+  return {
+    success: true,
+    iterations: iterations,
+    message: "บันทึกรหัสผ่านผู้ดูแลระบบเรียบร้อยแล้ว"
+  };
+}
+
 /**
  * Handle HTTP POST Requests (Write/Update/Delete Data)
  */
@@ -70,37 +440,58 @@ function doPost(e) {
     if (!e || !e.postData || !e.postData.contents) {
       throw new Error("No payload provided in POST request.");
     }
-    
+
     const request = JSON.parse(e.postData.contents);
     const action = request.action;
     const payload = request.payload;
+    const props = PropertiesService.getScriptProperties();
     let result = {};
-    
+
     switch (action) {
+      case 'verifyAdminPassword':
+        result = handleAdminLogin(payload, props);
+        if (result && result.valid === false) {
+          const authErr = new Error(result.message || "รหัสผ่านไม่ถูกต้อง");
+          authErr.code = result.code || 'INVALID_CREDENTIALS';
+          throw authErr;
+        }
+        break;
+      case 'adminLogout':
+        result = handleAdminLogout(props);
+        break;
       case 'createStudent':
+        validateWriteAuth(request, props);
         result = createStudent(payload);
         break;
       case 'updateStudent':
+        validateWriteAuth(request, props);
         result = updateStudent(payload);
         break;
       case 'deleteStudent':
+        validateWriteAuth(request, props);
         result = deleteStudent(payload.rowNumber, payload.studentName, payload.studentId);
         break;
       case 'saveAppConfig':
-        result = saveAppConfig(payload.spreadsheetId, payload.sheetName, payload.reportDate, payload.columnOrder);
+        validateWriteAuth(request, props);
+        // Note: payload.spreadsheetId is explicitly ignored to prevent arbitrary spreadsheet repointing
+        result = saveAppConfig(payload.sheetName, payload.reportDate, payload.columnOrder);
         break;
       default:
-        throw new Error("Unknown POST action: " + action);
+        const unkErr = new Error("Unknown POST action: " + action);
+        unkErr.code = 'INVALID_ACTION';
+        throw unkErr;
     }
-    
+
     return ContentService.createTextOutput(JSON.stringify({
       status: 'success',
       data: result
     })).setMimeType(ContentService.MimeType.JSON);
-    
+
   } catch (err) {
+    const errorCode = err.code || (err.message && err.message.includes('Unauthorized') ? 'UNAUTHORIZED' : (err.message && err.message.includes('Fail-Closed') ? 'WRITES_DISABLED' : 'SERVER_ERROR'));
     return ContentService.createTextOutput(JSON.stringify({
       status: 'error',
+      code: errorCode,
       message: err.message,
       stack: err.stack
     })).setMimeType(ContentService.MimeType.JSON);
@@ -576,6 +967,9 @@ function validateStudentData(student, isEdit, sheet) {
  * Protects against writing if column structure is unexpected.
  */
 function createStudent(studentObj) {
+  const props = PropertiesService.getScriptProperties();
+  checkWritesEnabled(props);
+
   const sheet = getDbSheet();
   const layout = detectSheetLayout(sheet);
 
@@ -671,6 +1065,9 @@ function createStudent(studentObj) {
  * 5. Protects against writing if column structure is unexpected.
  */
 function updateStudent(studentObj) {
+  const props = PropertiesService.getScriptProperties();
+  checkWritesEnabled(props);
+
   const sheet = getDbSheet();
   const layout = detectSheetLayout(sheet);
 
@@ -773,6 +1170,9 @@ function updateStudent(studentObj) {
  * Uses findTargetStudentRow to resolve row safely and prevent deleting the wrong student on duplicate names.
  */
 function deleteStudent(rowNumber, studentName, studentId) {
+  const props = PropertiesService.getScriptProperties();
+  checkWritesEnabled(props);
+
   const sheet = getDbSheet();
   const layout = detectSheetLayout(sheet);
 
@@ -860,19 +1260,24 @@ function getSheetTabsFromUrl(spreadsheetUrl) {
 
 /**
  * Save new app settings configurations to script properties
+ * Note: APP_SPREADSHEET_ID is strictly immutable via API to prevent arbitrary spreadsheet repointing.
  */
-function saveAppConfig(spreadsheetId, sheetName, reportDate, columnOrder) {
+function saveAppConfig(sheetName, reportDate, columnOrder) {
   try {
     const props = PropertiesService.getScriptProperties();
-    props.setProperty('APP_SPREADSHEET_ID', spreadsheetId.trim());
+    checkWritesEnabled(props);
+
+    if (!sheetName || sheetName.trim() === '') {
+      throw new Error("กรุณาระบุชื่อแผ่นงาน (Sheet Name)");
+    }
     props.setProperty('APP_SHEET_NAME', sheetName.trim());
-    props.setProperty('APP_REPORT_DATE', reportDate.trim());
+    props.setProperty('APP_REPORT_DATE', (reportDate || '').trim());
     if (columnOrder) {
       props.setProperty('APP_COLUMN_ORDER', columnOrder.trim());
     }
     return {
       success: true,
-      message: "บันทึกการตั้งค่าระบบเรียบร้อยแล้ว"
+      message: "บันทึกการตั้งค่าระบบเรียบร้อยแล้ว (Spreadsheet ID ถูกป้องกันไม่ให้เปลี่ยนแปลงผ่าน API)"
     };
   } catch (err) {
     return {
@@ -895,6 +1300,19 @@ if (typeof module !== 'undefined' && module.exports) {
     createStudent,
     updateStudent,
     deleteStudent,
-    isCheckboxChecked
+    isCheckboxChecked,
+    saveAppConfig,
+    doGet,
+    doPost,
+    checkWritesEnabled,
+    constantTimeEquals,
+    generateRandomHex,
+    computeHmacSha256Hex,
+    computePbkdf2HmacSha256Hex,
+    generateAdminSessionToken,
+    validateWriteAuth,
+    handleAdminLogin,
+    handleAdminLogout,
+    setupAdminPassword
   };
 }

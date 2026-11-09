@@ -168,9 +168,20 @@ global.PropertiesService = {
       if (k === 'APP_SPREADSHEET_ID') return 'mock-id';
       if (k === 'APP_SHEET_NAME') return 'mock-sheet';
       if (k === 'APP_REPORT_DATE') return '21/10/2569';
+      if (k === 'ENABLE_WRITES') return 'true';
       return null;
     },
-    setProperty: () => {}
+    setProperty: () => {},
+    setProperties: () => {}
+  })
+};
+
+global.ContentService = {
+  MimeType: { JSON: 'application/json' },
+  createTextOutput: (content) => ({
+    content: content,
+    getContent: () => content,
+    setMimeType: function() { return this; }
   })
 };
 
@@ -678,4 +689,240 @@ try {
   });
 }
 
-console.log('\n🎉 ALL 12 TARGETED PHASE 2 TEST SCENARIOS PASSED SUCCESSFULLY!\n');
+// =========================================================================
+// Case 13: Owner Decision — Option A Admin Authentication & Fail-Closed Guard Tests
+// =========================================================================
+console.log('\nCase 13: Owner Decision Option A Security & Fail-Closed Tests');
+
+let dynamicScriptProps = {
+  APP_SPREADSHEET_ID: 'mock-staging-id',
+  APP_SHEET_NAME: 'mock-sheet',
+  APP_REPORT_DATE: '21/10/2569',
+  ENABLE_WRITES: 'true',
+  TOKEN_SECRET: 'test-secret-key-32-bytes-minimum-length-random',
+  TOKEN_EPOCH: '1'
+};
+
+const savedPropsCase13 = global.PropertiesService.getScriptProperties;
+global.PropertiesService.getScriptProperties = () => ({
+  getProperty: (k) => dynamicScriptProps[k] !== undefined ? dynamicScriptProps[k] : null,
+  setProperty: (k, v) => { dynamicScriptProps[k] = String(v); },
+  setProperties: (obj) => {
+    for (const k in obj) {
+      dynamicScriptProps[k] = String(obj[k]);
+    }
+  }
+});
+
+// Setup active sheet for mock writes
+const case13SheetData = [
+  ['รหัสนักเรียน SET', 'ชื่อ-สกุล', 'ห้องเรียน/หน่วยบริการ', 'ครูผู้รับผิดชอบ', 'รับบริการที่ศูนย์', 'รับบริการที่หน่วยบริการ', 'รับบริการที่บ้าน', 'ความพิการตามบัตร', 'ความพิการตามคัดกรอง', 'บัตรประจำตัวคนพิการ', 'ใบรับรองความพิการ', 'แบบคัดกรองทางการศึกษา', 'วัน/เดือน/ปีเกิด', 'อายุ', 'ไม่ใช่สัญชาติไทย', 'พิการภายหลัง', 'หมายเหตุ'],
+  ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  ['069001', 'เด็กชายทดสอบ ระบบความปลอดภัย', 'ห้องเรียน 1', 'ครูสมชาย', '1', '', '', 'บุคคลออทิสติก', 'บุคคลออทิสติก', '1', '1', '1', '01/01/2560', '=DATEDIF(M3,NOW(),"Y")', '', '', '-']
+];
+const case13Sheet = new MockSheet('mock-sheet', case13SheetData, { strictBounds: true });
+activeMockSheet = case13Sheet;
+
+try {
+  // -----------------------------------------------------------------------
+  // 13.1 Fail-closed ENABLE_WRITES
+  // -----------------------------------------------------------------------
+  dynamicScriptProps.ENABLE_WRITES = 'false';
+  assert.throws(() => {
+    code.checkWritesEnabled(global.PropertiesService.getScriptProperties());
+  }, /ENABLE_WRITES != true/, 'Must block checkWritesEnabled when ENABLE_WRITES is false');
+
+  assert.throws(() => {
+    code.createStudent({ name: 'ทดสอบ' });
+  }, /ENABLE_WRITES != true/, 'Must block createStudent when ENABLE_WRITES is false');
+
+  assert.throws(() => {
+    code.updateStudent({ rowNumber: 3, name: 'ทดสอบ' });
+  }, /ENABLE_WRITES != true/, 'Must block updateStudent when ENABLE_WRITES is false');
+
+  assert.throws(() => {
+    code.deleteStudent(3, 'เด็กชายทดสอบ');
+  }, /ENABLE_WRITES != true/, 'Must block deleteStudent when ENABLE_WRITES is false');
+
+  const saveConfigBlocked = code.saveAppConfig('mock-sheet', '21/10/2569', 'name,classroom');
+  assert.strictEqual(saveConfigBlocked.success, false);
+  assert.match(saveConfigBlocked.message, /ENABLE_WRITES != true/, 'Must block saveAppConfig when ENABLE_WRITES is false');
+
+  // Missing / empty ENABLE_WRITES
+  delete dynamicScriptProps.ENABLE_WRITES;
+  assert.throws(() => {
+    code.checkWritesEnabled(global.PropertiesService.getScriptProperties());
+  }, /ENABLE_WRITES != true/, 'Must fail-closed when ENABLE_WRITES is missing');
+
+  // Re-enable writes strictly
+  dynamicScriptProps.ENABLE_WRITES = 'true';
+  assert.doesNotThrow(() => {
+    code.checkWritesEnabled(global.PropertiesService.getScriptProperties());
+  }, 'Must permit checkWritesEnabled when ENABLE_WRITES is strictly "true"');
+
+  // -----------------------------------------------------------------------
+  // 13.2 Password verification with PBKDF2
+  // -----------------------------------------------------------------------
+  const testPassword = 'CorrectAdminPassword@2026';
+  code.setupAdminPassword(testPassword, 10000);
+  assert.ok(dynamicScriptProps.ADMIN_PASSWORD_PBKDF2.startsWith('pbkdf2_sha256$10000$'), 'ADMIN_PASSWORD_PBKDF2 must be formatted correctly');
+
+  // Measure verification time with correct password
+  const t0 = Date.now();
+  const loginSuccess = code.handleAdminLogin({ password: testPassword });
+  const pbkdf2Duration = Date.now() - t0;
+  console.log(`    ⏱️ Measured PBKDF2 verification time (10,000 iterations): ${pbkdf2Duration}ms`);
+  assert.strictEqual(loginSuccess.valid, true, 'valid flag must be true');
+  assert.ok(loginSuccess.token && typeof loginSuccess.token === 'string', 'Token must be issued');
+  assert.ok(loginSuccess.expiresAt > Date.now(), 'Token must have future expiry');
+  const sessionToken = loginSuccess.token;
+
+  // Incorrect password
+  const badLogin = code.handleAdminLogin({ password: 'WrongPassword999' });
+  assert.strictEqual(badLogin.valid, false);
+  assert.strictEqual(badLogin.code, 'INVALID_CREDENTIALS', 'Must reject bad password with INVALID_CREDENTIALS');
+
+  // Empty password
+  const emptyLogin = code.handleAdminLogin({ password: '' });
+  assert.strictEqual(emptyLogin.valid, false);
+  assert.strictEqual(emptyLogin.code, 'INVALID_CREDENTIALS', 'Must reject empty password with INVALID_CREDENTIALS');
+
+  // doPost verifyAdminPassword endpoint checks
+  const postLoginOk = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'verifyAdminPassword', payload: { password: testPassword } }) }
+  }).getContent());
+  assert.strictEqual(postLoginOk.status, 'success');
+  assert.strictEqual(postLoginOk.data.valid, true);
+
+  const postLoginFail = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'verifyAdminPassword', payload: { password: 'WrongPassword' } }) }
+  }).getContent());
+  assert.strictEqual(postLoginFail.status, 'error');
+  assert.strictEqual(postLoginFail.code, 'INVALID_CREDENTIALS');
+
+  // -----------------------------------------------------------------------
+  // 13.3 Token validation (tampered, expired, revoked)
+  // -----------------------------------------------------------------------
+  // Valid token
+  assert.doesNotThrow(() => {
+    code.validateWriteAuth({ token: sessionToken }, global.PropertiesService.getScriptProperties());
+  }, 'Valid token must pass validateWriteAuth');
+
+  // Missing token
+  assert.throws(() => {
+    code.validateWriteAuth({}, global.PropertiesService.getScriptProperties());
+  }, (err) => err.code === 'UNAUTHORIZED', 'Missing token must throw UNAUTHORIZED');
+
+  // Tampered signature
+  const tamperedSigToken = sessionToken.slice(0, -6) + 'ffffff';
+  assert.throws(() => {
+    code.validateWriteAuth({ token: tamperedSigToken }, global.PropertiesService.getScriptProperties());
+  }, (err) => err.code === 'UNAUTHORIZED', 'Tampered signature must throw UNAUTHORIZED');
+
+  // Expired token (created 20 minutes ago)
+  const expiredToken = code.generateAdminSessionToken(global.PropertiesService.getScriptProperties(), Date.now() - 20 * 60 * 1000);
+  assert.throws(() => {
+    code.validateWriteAuth({ token: expiredToken }, global.PropertiesService.getScriptProperties());
+  }, (err) => err.code === 'SESSION_EXPIRED', 'Expired token must throw SESSION_EXPIRED');
+
+  // Revoked token via adminLogout bumping TOKEN_EPOCH
+  code.handleAdminLogout(global.PropertiesService.getScriptProperties());
+  assert.strictEqual(dynamicScriptProps.TOKEN_EPOCH, '2', 'TOKEN_EPOCH must be bumped to 2');
+  assert.throws(() => {
+    code.validateWriteAuth({ token: sessionToken }, global.PropertiesService.getScriptProperties());
+  }, (err) => err.code === 'SESSION_REVOKED', 'Old token must throw SESSION_REVOKED after epoch bump');
+
+  // -----------------------------------------------------------------------
+  // 13.4 Server-side direct POST rejection across all mutations
+  // -----------------------------------------------------------------------
+  // Generate fresh token after logout
+  const freshLogin = code.handleAdminLogin({ password: testPassword });
+  const freshToken = freshLogin.token;
+
+  // Unauthenticated createStudent
+  const postCreateNoAuth = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'createStudent', payload: { name: 'นักเรียนใหม่' } }) }
+  }).getContent());
+  assert.strictEqual(postCreateNoAuth.status, 'error');
+  assert.strictEqual(postCreateNoAuth.code, 'UNAUTHORIZED', 'doPost createStudent without token must be UNAUTHORIZED');
+
+  // Unauthenticated updateStudent
+  const postUpdateNoAuth = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'updateStudent', payload: { rowNumber: 3, name: 'แก้ไขชื่อ' } }) }
+  }).getContent());
+  assert.strictEqual(postUpdateNoAuth.status, 'error');
+  assert.strictEqual(postUpdateNoAuth.code, 'UNAUTHORIZED', 'doPost updateStudent without token must be UNAUTHORIZED');
+
+  // Unauthenticated deleteStudent
+  const postDeleteNoAuth = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'deleteStudent', payload: { rowNumber: 3, studentName: 'เด็กชายทดสอบ ระบบความปลอดภัย' } }) }
+  }).getContent());
+  assert.strictEqual(postDeleteNoAuth.status, 'error');
+  assert.strictEqual(postDeleteNoAuth.code, 'UNAUTHORIZED', 'doPost deleteStudent without token must be UNAUTHORIZED');
+
+  // Unauthenticated saveAppConfig
+  const postSaveConfigNoAuth = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'saveAppConfig', payload: { sheetName: 'mock-sheet' } }) }
+  }).getContent());
+  assert.strictEqual(postSaveConfigNoAuth.status, 'error');
+  assert.strictEqual(postSaveConfigNoAuth.code, 'UNAUTHORIZED', 'doPost saveAppConfig without token must be UNAUTHORIZED');
+
+  // Authenticated saveAppConfig
+  const postSaveConfigAuth = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({
+      action: 'saveAppConfig',
+      payload: {
+        token: freshToken,
+        sheetName: 'mock-sheet',
+        reportDate: '25/10/2569',
+        columnOrder: 'name,classroom,teacher'
+      }
+    }) }
+  }).getContent());
+  assert.strictEqual(postSaveConfigAuth.status, 'success', 'Authenticated saveAppConfig must succeed');
+  assert.strictEqual(dynamicScriptProps.APP_REPORT_DATE, '25/10/2569');
+
+  // -----------------------------------------------------------------------
+  // 13.5 Config repoint rejection (Spreadsheet ID immutability)
+  // -----------------------------------------------------------------------
+  const baseSpreadsheetId = dynamicScriptProps.APP_SPREADSHEET_ID;
+  const repointAttempt = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({
+      action: 'saveAppConfig',
+      payload: {
+        token: freshToken,
+        spreadsheetId: 'malicious-attacker-spreadsheet-id',
+        sheetName: 'mock-sheet',
+        reportDate: '26/10/2569',
+        columnOrder: 'name,classroom'
+      }
+    }) }
+  }).getContent());
+  assert.strictEqual(repointAttempt.status, 'success');
+  assert.strictEqual(dynamicScriptProps.APP_SPREADSHEET_ID, baseSpreadsheetId, 'APP_SPREADSHEET_ID must remain unchanged despite malicious payload');
+  assert.notStrictEqual(dynamicScriptProps.APP_SPREADSHEET_ID, 'malicious-attacker-spreadsheet-id', 'Attacker spreadsheetId must be rejected/ignored');
+
+  // -----------------------------------------------------------------------
+  // 13.6 Public/SET preview zero-write verification
+  // -----------------------------------------------------------------------
+  const sheetDataBefore = JSON.stringify(case13Sheet.data);
+  const getStudentRes = JSON.parse(code.doGet({
+    parameter: { action: 'getStudentDataAndConfig' }
+  }).getContent());
+  assert.strictEqual(getStudentRes.status, 'success', 'Public doGet must succeed without authentication');
+  assert.ok(Array.isArray(getStudentRes.data.students), 'Public doGet must return students list');
+
+  const getTabsRes = JSON.parse(code.doGet({
+    parameter: { action: 'getTabs' }
+  }).getContent());
+  assert.strictEqual(getTabsRes.status, 'success', 'Public getTabs must succeed');
+
+  const sheetDataAfter = JSON.stringify(case13Sheet.data);
+  assert.strictEqual(sheetDataAfter, sheetDataBefore, 'Public doGet and preview actions must perform ZERO sheet writes');
+
+  console.log('  ✅ Passed Case 13: Option A admin authentication, PBKDF2 hash verifier, and fail-closed guards');
+} finally {
+  global.PropertiesService.getScriptProperties = savedPropsCase13;
+}
+
+console.log('\n🎉 ALL 13 TARGETED PHASE 2 TEST SCENARIOS PASSED SUCCESSFULLY!\n');

@@ -670,22 +670,31 @@
 
         <!-- TAB 1: General Database & App Settings Panel -->
         <div id="adminTabPanelGeneral" class="glass-panel p-6 flex flex-col gap-5">
-          <div class="flex items-center gap-3 border-b border-emerald-100/50 pb-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-800 to-cyan-700 flex items-center justify-center text-white">
-              <i data-lucide="settings" class="w-5 h-5"></i>
+          <div class="flex items-center justify-between border-b border-emerald-100/50 pb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-800 to-cyan-700 flex items-center justify-center text-white">
+                <i data-lucide="settings" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-base text-emerald-900">แผงตั้งค่าระบบสำหรับผู้ดูแล (Admin Settings)</h3>
+                <p class="text-xs text-gray-500">จัดการฐานข้อมูลและกำหนดค่าตั้งอ้างอิงสำหรับสถิติรายงาน</p>
+              </div>
             </div>
-            <div>
-              <h3 class="font-bold text-base text-emerald-900">แผงตั้งค่าระบบสำหรับผู้ดูแล (Admin Settings)</h3>
-              <p class="text-xs text-gray-500">จัดการฐานข้อมูลและกำหนดค่าตั้งอ้างอิงสำหรับสถิติรายงาน</p>
-            </div>
+            <button type="button" id="btnAdminLogout" class="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold flex items-center gap-1.5 transition" title="ออกจากเซสชันผู้ดูแลระบบ">
+              <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+              <span>ออกจากระบบ Admin</span>
+            </button>
           </div>
           
           <div class="grid grid-cols-1 gap-5">
             <!-- Google Sheet URL Configuration -->
             <div class="flex flex-col gap-2">
-              <label class="text-sm font-semibold text-gray-700">ลิงก์ Google Sheet ฐานข้อมูล</label>
+              <label class="text-sm font-semibold text-gray-700 flex items-center justify-between">
+                <span>ลิงก์ Google Sheet ฐานข้อมูล</span>
+                <span class="text-xs text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded font-normal">กำหนดผ่าน Script Properties (อ่านอย่างเดียว)</span>
+              </label>
               <div class="flex flex-col sm:flex-row gap-3">
-                <input type="text" id="adminSpreadsheetUrl" placeholder="https://docs.google.com/spreadsheets/d/..." class="glass-input text-sm flex-1">
+                <input type="text" id="adminSpreadsheetUrl" readonly placeholder="https://docs.google.com/spreadsheets/d/..." class="glass-input text-sm flex-1 bg-gray-50 cursor-not-allowed">
                 <button type="button" id="btnAdminFetchTabs" class="glass-btn-primary text-sm flex items-center justify-center gap-1.5 whitespace-nowrap">
                   <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                   ดึงรายชื่อแผ่นงาน

@@ -14,9 +14,19 @@ const google = {
       _callApi: function(action, payload = null, getMethod = false) {
         const url = getMethod ? `${CONFIG.API_URL}?action=${action}` + (payload ? `&url=${encodeURIComponent(payload)}` : '') : CONFIG.API_URL;
         
+        let requestPayload = payload;
+        if (!getMethod && typeof state !== 'undefined' && state && state.adminToken) {
+          if (typeof requestPayload === 'object' && requestPayload !== null) {
+            requestPayload = Object.assign({ token: state.adminToken }, requestPayload);
+          } else if (!requestPayload) {
+            requestPayload = { token: state.adminToken };
+          }
+        }
+
+        const adminToken = (typeof state !== 'undefined' && state && state.adminToken) ? state.adminToken : undefined;
         const options = getMethod ? { method: 'GET' } : {
           method: 'POST',
-          body: JSON.stringify({ action, payload })
+          body: JSON.stringify({ action, payload: requestPayload, token: adminToken })
         };
         
         fetch(url, options)
@@ -28,7 +38,26 @@ const google = {
             if (result.status === 'success') {
               if (this._onSuccess) this._onSuccess(result.data);
             } else {
-              if (this._onFailure) this._onFailure(new Error(result.message));
+              if (result.code === 'UNAUTHORIZED' || result.code === 'SESSION_EXPIRED' || result.code === 'SESSION_REVOKED') {
+                if (typeof state !== 'undefined' && state) {
+                  state.adminToken = null;
+                }
+                if (typeof sessionStorage !== 'undefined') {
+                  sessionStorage.removeItem('ADMIN_SESSION_TOKEN');
+                }
+                if (typeof renderStudentTable === 'function') {
+                  renderStudentTable();
+                }
+                if (typeof Swal !== 'undefined') {
+                  Swal.fire({
+                    icon: 'warning',
+                    title: 'เซสชันหมดอายุหรือถูกยกเลิก',
+                    text: 'กรุณาเข้าสู่ระบบ Admin ใหม่อีกครั้งเพื่อดำเนินการ',
+                    confirmButtonColor: '#2E7D32'
+                  });
+                }
+              }
+              if (this._onFailure) this._onFailure(new Error(result.message || 'การดำเนินการล้มเหลว'));
             }
           })
           .catch(err => {
@@ -54,8 +83,20 @@ const google = {
       getSheetTabsFromUrl: function(url) {
         this._callApi('getTabs', url, true);
       },
-      saveAppConfig: function(spreadsheetId, sheetName, reportDate, columnOrder) {
-        this._callApi('saveAppConfig', { spreadsheetId, sheetName, reportDate, columnOrder });
+      saveAppConfig: function(spreadsheetIdOrSheetName, sheetNameOrReportDate, reportDateOrColOrder, maybeColOrder) {
+        let sheetName, reportDate, columnOrder;
+        if (maybeColOrder !== undefined) {
+          // Signature: (spreadsheetId, sheetName, reportDate, columnOrder)
+          sheetName = sheetNameOrReportDate;
+          reportDate = reportDateOrColOrder;
+          columnOrder = maybeColOrder;
+        } else {
+          // Signature: (sheetName, reportDate, columnOrder)
+          sheetName = spreadsheetIdOrSheetName;
+          reportDate = sheetNameOrReportDate;
+          columnOrder = reportDateOrColOrder;
+        }
+        this._callApi('saveAppConfig', { sheetName, reportDate, columnOrder });
       },
       createStudent: function(payload) {
         this._callApi('createStudent', payload);
@@ -63,8 +104,11 @@ const google = {
       updateStudent: function(payload) {
         this._callApi('updateStudent', payload);
       },
-      deleteStudent: function(rowNumber, studentName) {
-        this._callApi('deleteStudent', { rowNumber, studentName });
+      deleteStudent: function(rowNumber, studentName, studentId) {
+        this._callApi('deleteStudent', { rowNumber, studentName, studentId });
+      },
+      adminLogout: function() {
+        this._callApi('adminLogout', {});
       }
     }
   }
@@ -72,6 +116,7 @@ const google = {
 
 // App Global State
   const state = {
+    adminToken: (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('ADMIN_SESSION_TOKEN') : null),
     allStudents: [],
     filteredStudents: [],
     classrooms: [],
@@ -353,6 +398,11 @@ const google = {
       const targetSection = $this.data('section');
       
       if (targetSection === 'admin') {
+        if (state.adminToken) {
+          switchSection($this, targetSection);
+          initAdminSettingsPanel();
+          return;
+        }
         Swal.fire({
           title: 'เข้าสู่แผงควบคุมระบบ (Admin)',
           text: 'กรุณากรอกรหัสผ่านเพื่อเข้าใช้งานตั้งค่าระบบ',
@@ -380,10 +430,15 @@ const google = {
               })
               .then(res => res.json())
               .then(data => {
-                if (data.status === 'success' && data.data.valid) {
+                if (data.status === 'success' && data.data && data.data.valid) {
+                  state.adminToken = data.data.token || null;
+                  if (typeof sessionStorage !== 'undefined' && data.data.token) {
+                    sessionStorage.setItem('ADMIN_SESSION_TOKEN', data.data.token);
+                  }
+                  renderStudentTable();
                   resolve(); // Password is correct
                 } else {
-                  resolve('รหัสผ่านไม่ถูกต้อง!'); // Incorrect
+                  resolve((data && data.message) ? data.message : 'รหัสผ่านไม่ถูกต้อง!'); // Incorrect
                 }
               })
               .catch(err => {
@@ -600,6 +655,11 @@ const google = {
         .saveAppConfig(spreadsheetId, sheetName, reportDateStr, colOrderStr);
     });
 
+    // Admin Logout Button
+    $('#btnAdminLogout').click(function() {
+      handleAdminLogout();
+    });
+
     // Close Drill Down Container
     $(document).on('click', '#btnCloseDrillDown', function() {
       $('#chartDrillDownContainer').addClass('hidden');
@@ -607,6 +667,50 @@ const google = {
 
     // Initialize SET Excel Importer Events
     initSetImportEvents();
+  }
+
+  function handleAdminLogout() {
+    Swal.fire({
+      title: 'ออกจากระบบ Admin?',
+      text: 'คุณต้องการออกจากระบบและยกเลิกเซสชันปัจจุบันใช่หรือไม่?',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#2E7D32',
+      cancelButtonColor: '#757575',
+      confirmButtonText: 'ใช่, ออกจากระบบ',
+      cancelButtonText: 'ยกเลิก'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        if (state.adminToken) {
+          google.script.run
+            .withSuccessHandler(() => {
+              finishLogout();
+            })
+            .withFailureHandler(() => {
+              finishLogout();
+            })
+            .adminLogout();
+        } else {
+          finishLogout();
+        }
+      }
+    });
+  }
+
+  function finishLogout() {
+    state.adminToken = null;
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem('ADMIN_SESSION_TOKEN');
+    }
+    renderStudentTable();
+    $('.nav-link[data-section="dashboard"]').trigger('click');
+    Swal.fire({
+      icon: 'success',
+      title: 'ออกจากระบบสำเร็จ',
+      text: 'ยกเลิกสิทธิ์ Admin เรียบร้อยแล้ว',
+      timer: 1500,
+      showConfirmButton: false
+    });
   }
 
   // Section toggle helper
@@ -934,17 +1038,30 @@ const google = {
         cellsHtml += getColumnCellHtml(colId, student, svcText, docBadges, dobText, statusLabels, displayDis);
       });
 
+      let actionButtons = '';
+      if (state.adminToken) {
+        actionButtons = `
+          <button onclick="editStudentByRow(${student.rowNumber})" class="p-2 text-emerald-700 hover:bg-emerald-500/10 rounded-lg transition" title="แก้ไข">
+            <i data-lucide="edit-3" class="w-4 h-4"></i>
+          </button>
+          <button onclick="deleteStudentByRow(${student.rowNumber}, '${student.name.replace(/'/g, "\\'")}', '${(student.studentId || '').replace(/'/g, "\\'")}')" class="p-2 text-red-600 hover:bg-red-500/10 rounded-lg transition" title="ลบ">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>
+        `;
+      } else {
+        actionButtons = `
+          <span class="inline-flex items-center gap-1 text-xs text-gray-400 bg-gray-100/80 px-2 py-1 rounded-md" title="เข้าสู่ระบบ Admin เพื่อแก้ไขหรือลบ">
+            <i data-lucide="lock" class="w-3.5 h-3.5"></i> ล็อก
+          </span>
+        `;
+      }
+
       const rowHtml = `
         <tr class="hover:bg-white/40 border-b border-emerald-100/40 transition">
           ${cellsHtml}
           <td class="px-6 py-4 text-sm text-right whitespace-nowrap">
             <div class="flex items-center justify-end gap-2">
-              <button onclick="editStudentByRow(${student.rowNumber})" class="p-2 text-emerald-700 hover:bg-emerald-500/10 rounded-lg transition" title="แก้ไข">
-                <i data-lucide="edit-3" class="w-4 h-4"></i>
-              </button>
-              <button onclick="deleteStudentByRow(${student.rowNumber}, '${student.name.replace(/'/g, "\\'")}')" class="p-2 text-red-600 hover:bg-red-500/10 rounded-lg transition" title="ลบ">
-                <i data-lucide="trash-2" class="w-4 h-4"></i>
-              </button>
+              ${actionButtons}
             </div>
           </td>
         </tr>
@@ -1096,6 +1213,15 @@ const google = {
 
   // Triggered by row edit button Click
   window.editStudentByRow = function(rowNumber) {
+    if (!state.adminToken) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ต้องเข้าสู่ระบบ Admin',
+        text: 'กรุณาเข้าสู่ระบบผู้ดูแลระบบที่เมนู Admin ก่อนแก้ไขข้อมูล',
+        confirmButtonColor: '#2E7D32'
+      });
+      return;
+    }
     const student = state.allStudents.find(s => s.rowNumber === rowNumber);
     if (student) {
       openStudentModal(student);
@@ -1104,6 +1230,15 @@ const google = {
 
   // Submit action for creating/updating student
   function submitStudentForm() {
+    if (!state.adminToken) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ต้องเข้าสู่ระบบ Admin',
+        text: 'กรุณาเข้าสู่ระบบผู้ดูแลระบบที่เมนู Admin ก่อนบันทึกข้อมูล',
+        confirmButtonColor: '#2E7D32'
+      });
+      return;
+    }
     const name = $('#studentName').val().trim();
     const classroom = $('#studentClassroom').val();
     const teacher = $('#studentTeacher').val();
@@ -1225,7 +1360,16 @@ const google = {
   }
 
   // Triggered by row delete button Click
-  window.deleteStudentByRow = function(rowNumber, studentName) {
+  window.deleteStudentByRow = function(rowNumber, studentName, studentId) {
+    if (!state.adminToken) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ต้องเข้าสู่ระบบ Admin',
+        text: 'กรุณาเข้าสู่ระบบผู้ดูแลระบบที่เมนู Admin ก่อนลบข้อมูล',
+        confirmButtonColor: '#2E7D32'
+      });
+      return;
+    }
     Swal.fire({
       title: 'ยืนยันการลบข้อมูล?',
       text: `คุณต้องการลบข้อมูลของ "${studentName}" ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้!`,
@@ -1260,7 +1404,7 @@ const google = {
               confirmButtonColor: '#2E7D32'
             });
           })
-          .deleteStudent(rowNumber, studentName);
+          .deleteStudent(rowNumber, studentName, studentId);
       }
     });
   };
