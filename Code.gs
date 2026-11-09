@@ -3,35 +3,32 @@
  * Built with Google Apps Script & Google Sheets
  */
 
-// App configuration using PropertiesService with fallbacks
+/**
+ * App configuration using PropertiesService
+ * Strict Staging Isolation Guard:
+ * - Must explicitly configure APP_SPREADSHEET_ID in Script Properties.
+ * - NEVER falls back to the hardcoded Production Spreadsheet ID.
+ * - Halts execution if spreadsheetId or sheetName is missing.
+ */
 function getAppConfig() {
-  try {
-    const props = PropertiesService.getScriptProperties();
-    let spreadsheetId = props.getProperty('APP_SPREADSHEET_ID');
-    if (!spreadsheetId) {
-      try {
-        spreadsheetId = SpreadsheetApp.getActiveSpreadsheet().getId();
-      } catch (e) {
-        spreadsheetId = '1Ryf-HxA4guPi63QpfbSAh_39GxOb3mL1ENMgI0pLtsI';
-      }
-    }
-    const sheetName = props.getProperty('APP_SHEET_NAME') || 'มิ.ย.69 ล่าสุด';
-    const reportDate = props.getProperty('APP_REPORT_DATE') || '';
-    const columnOrder = props.getProperty('APP_COLUMN_ORDER') || 'name,classroom,teacher,serviceType,disabilityType,documents,birthday';
-    
-    return {
-      spreadsheetId: spreadsheetId,
-      sheetName: sheetName,
-      reportDate: reportDate,
-      columnOrder: columnOrder
-    };
-  } catch (err) {
-    return {
-      spreadsheetId: '1Ryf-HxA4guPi63QpfbSAh_39GxOb3mL1ENMgI0pLtsI',
-      sheetName: 'มิ.ย.69 ล่าสุด',
-      reportDate: ''
-    };
+  const props = PropertiesService.getScriptProperties();
+  const spreadsheetId = props ? props.getProperty('APP_SPREADSHEET_ID') : null;
+  if (!spreadsheetId || spreadsheetId.trim() === '') {
+    throw new Error("ไม่ได้กำหนดค่า APP_SPREADSHEET_ID ใน Script Properties ระงับการทำงานเพื่อความปลอดภัย (ห้าม fallback ไปยัง Production ID โดยอัตโนมัติ)");
   }
+  const sheetName = props ? props.getProperty('APP_SHEET_NAME') : null;
+  if (!sheetName || sheetName.trim() === '') {
+    throw new Error("ไม่ได้กำหนดค่า APP_SHEET_NAME ใน Script Properties ระงับการทำงานเพื่อความปลอดภัย");
+  }
+  const reportDate = (props && props.getProperty('APP_REPORT_DATE')) || '';
+  const columnOrder = (props && props.getProperty('APP_COLUMN_ORDER')) || 'name,classroom,teacher,serviceType,disabilityType,documents,birthday';
+
+  return {
+    spreadsheetId: spreadsheetId.trim(),
+    sheetName: sheetName.trim(),
+    reportDate: reportDate.trim(),
+    columnOrder: columnOrder.trim()
+  };
 }
 
 /**
@@ -112,6 +109,10 @@ function doPost(e) {
 
 /**
  * Helper to fetch the database sheet dynamically
+ * Strict Sheet Selection Guard:
+ * - Looks up sheet by exact name or matching GID.
+ * - NEVER falls back to GID 0, GID 86711650, or sheets[0] automatically.
+ * - Halts execution if the specified sheet tab cannot be found.
  */
 function getDbSheet() {
   const config = getAppConfig();
@@ -126,23 +127,13 @@ function getDbSheet() {
   // Fallback: Check if sheetName is GID
   const sheets = ss.getSheets();
   for (let i = 0; i < sheets.length; i++) {
-    if (sheets[i].getSheetId().toString() === config.sheetName) {
+    if (sheets[i].getSheetId && sheets[i].getSheetId().toString() === config.sheetName) {
       return sheets[i];
     }
   }
   
-  // Default fallback: return GID 0 or GID 86711650
-  for (let i = 0; i < sheets.length; i++) {
-    if (sheets[i].getSheetId() == 0 || sheets[i].getSheetId() == 86711650) {
-      return sheets[i];
-    }
-  }
-  
-  if (sheets.length > 0) {
-    return sheets[0];
-  }
-  
-  throw new Error("ไม่พบแผ่นงานชีตฐานข้อมูลในโครงการชีตที่เชื่อมต่อ");
+  // Strict Safety Guard: DO NOT fallback to GID 0 or sheets[0]!
+  throw new Error("ไม่พบแผ่นงานชื่อ '" + config.sheetName + "' ในโครงการชีตที่เชื่อมต่อ ระงับการทำงาน (ไม่อนุญาตให้เลือกแผ่นงานแรกโดยอัตโนมัติเพื่อป้องกันข้อมูลผิดพลาด)");
 }
 
 /**
@@ -893,6 +884,8 @@ function saveAppConfig(spreadsheetId, sheetName, reportDate, columnOrder) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    getAppConfig,
+    getDbSheet,
     detectSheetLayout,
     getStudentData,
     findInsertionRow,

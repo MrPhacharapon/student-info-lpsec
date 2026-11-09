@@ -625,4 +625,57 @@ assert.throws(() => {
 }, /พบชื่อนักเรียนซ้ำกัน 2 รายการ.*และชีตไม่มีคอลัมน์รหัสนักเรียน SET/, 'Must halt update on Legacy duplicate names');
 console.log('  ✅ Passed Case 11: Duplicate names and ambiguous identity protection test');
 
-console.log('\n🎉 ALL 11 TARGETED PHASE 2 TEST SCENARIOS PASSED SUCCESSFULLY!\n');
+// =========================================================================
+// Case 12: Staging Isolation & Strict Sheet Selection Guards
+// =========================================================================
+console.log('\nCase 12: Staging Isolation & Strict Sheet Selection Guards');
+// 12.1: getAppConfig must throw when APP_SPREADSHEET_ID is missing (NEVER fallback to Production)
+const originalProps = global.PropertiesService.getScriptProperties;
+try {
+  global.PropertiesService.getScriptProperties = () => ({
+    getProperty: (k) => (k === 'APP_SPREADSHEET_ID' ? '' : 'mock-sheet')
+  });
+  assert.throws(() => {
+    code.getAppConfig();
+  }, /ไม่ได้กำหนดค่า APP_SPREADSHEET_ID.*ระงับการทำงานเพื่อความปลอดภัย/, 'Must halt when APP_SPREADSHEET_ID is missing without fallback to Production');
+
+  // 12.2: getAppConfig must throw when APP_SHEET_NAME is missing
+  global.PropertiesService.getScriptProperties = () => ({
+    getProperty: (k) => (k === 'APP_SPREADSHEET_ID' ? 'staging-id' : '')
+  });
+  assert.throws(() => {
+    code.getAppConfig();
+  }, /ไม่ได้กำหนดค่า APP_SHEET_NAME.*ระงับการทำงานเพื่อความปลอดภัย/, 'Must halt when APP_SHEET_NAME is missing');
+
+  // 12.3: getDbSheet must throw when sheetName cannot be found (NEVER fallback to GID 0 or first sheet)
+  global.PropertiesService.getScriptProperties = () => ({
+    getProperty: (k) => {
+      if (k === 'APP_SPREADSHEET_ID') return 'staging-id';
+      if (k === 'APP_SHEET_NAME') return 'แท็บที่ไม่มีจริง_404';
+      return null;
+    }
+  });
+
+  const dummySheet = new MockSheet('แผ่นงานอื่น_GID0', [['หัวตาราง']], { strictBounds: true });
+  dummySheet.getSheetId = () => 0;
+
+  global.SpreadsheetApp.openById = () => ({
+    getSheetByName: (name) => (name === 'แผ่นงานอื่น_GID0' ? dummySheet : null),
+    getSheets: () => [dummySheet]
+  });
+
+  assert.throws(() => {
+    code.getDbSheet();
+  }, /ไม่พบแผ่นงานชื่อ 'แท็บที่ไม่มีจริง_404'.*ไม่อนุญาตให้เลือกแผ่นงานแรกโดยอัตโนมัติ/, 'Must halt when sheetName not found without falling back to GID 0 or sheets[0]');
+
+  console.log('  ✅ Passed Case 12: Staging isolation and strict sheet selection guard tests');
+} finally {
+  // Restore original mock
+  global.PropertiesService.getScriptProperties = originalProps;
+  global.SpreadsheetApp.openById = () => ({
+    getSheetByName: () => activeMockSheet,
+    getSheets: () => [activeMockSheet]
+  });
+}
+
+console.log('\n🎉 ALL 12 TARGETED PHASE 2 TEST SCENARIOS PASSED SUCCESSFULLY!\n');
