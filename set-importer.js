@@ -22,7 +22,7 @@
   const COLUMN_ALIASES = {
     citizenId: [
       'เลขประจำตัวประชาชน', 'เลขบัตรประชาชน', 'เลขประจำตัวประชาชนผู้เรียน',
-      'citizen_id', 'id_card', 'identification_no', 'เลขบัตรประจำตัวประชาชน'
+      'เลข 13 หลัก', 'citizen_id', 'id_card', 'identification_no', 'เลขบัตรประจำตัวประชาชน'
     ],
     studentId: [
       'เลขประจำตัวนักเรียน', 'รหัสนักเรียน', 'เลขประจำตัว', 'student_id', 'code'
@@ -353,7 +353,7 @@
 
     // Specific exclusion lists to prevent cross-contamination
     const fieldExcludes = {
-      studentId: ['ประชาชน', 'citizen', 'idcard', 'id_card', 'บัตรประชาชน', 'ผู้เสียภาษี'],
+      studentId: ['ประชาชน', 'citizen', 'idcard', 'id_card', 'บัตรประชาชน', 'ผู้เสียภาษี', '13 หลัก', '13หลัก'],
       citizenId: ['นักเรียน', 'student']
     };
 
@@ -494,14 +494,16 @@
   /**
    * Normalize an extracted SET student record
    */
-  function normalizeSetGeneralRow(row, mapping) {
-    const citizenId = cleanCitizenId(row[mapping.citizenId]);
-    const studentId = cleanStudentId(row[mapping.studentId]);
+  function normalizeSetGeneralRow(row, mapping = {}) {
+    if (!row) return { citizenId: '', studentId: '', prefix: '', firstName: '', lastName: '', fullName: '', normalizedName: '', dob: '', age: '', gender: '', disabilityTypeSet: '', rawRow: row };
+    const m = (mapping && Object.keys(mapping).length > 0) ? mapping : detectColumns(Object.keys(row));
+    const citizenId = cleanCitizenId(m.citizenId ? row[m.citizenId] : row.citizenId);
+    const studentId = cleanStudentId(m.studentId ? row[m.studentId] : row.studentId);
     
-    let prefix = mapping.prefix ? (row[mapping.prefix] || '').toString().trim() : '';
-    let firstName = mapping.firstName ? (row[mapping.firstName] || '').toString().trim() : '';
-    let lastName = mapping.lastName ? (row[mapping.lastName] || '').toString().trim() : '';
-    let fullName = mapping.fullName ? (row[mapping.fullName] || '').toString().trim() : '';
+    let prefix = m.prefix ? (row[m.prefix] || '').toString().trim() : '';
+    let firstName = m.firstName ? (row[m.firstName] || '').toString().trim() : '';
+    let lastName = m.lastName ? (row[m.lastName] || '').toString().trim() : '';
+    let fullName = m.fullName ? (row[m.fullName] || '').toString().trim() : '';
 
     if (!fullName && firstName) {
       fullName = `${prefix} ${firstName} ${lastName}`.trim().replace(/\s+/g, ' ');
@@ -514,13 +516,13 @@
       }
     }
 
-    const rawDob = mapping.dob ? row[mapping.dob] : '';
+    const rawDob = m.dob ? row[m.dob] : '';
     const parsedDob = parseDateBE(rawDob);
     const dobFormatted = parsedDob ? parsedDob.formatted : '';
     const ageObj = dobFormatted ? calculateAgeExact(dobFormatted) : null;
 
-    const disabilityType = mapping.disabilityType ? (row[mapping.disabilityType] || '').toString().trim() : '';
-    const gender = mapping.gender ? (row[mapping.gender] || '').toString().trim() : '';
+    const disabilityType = m.disabilityType ? (row[m.disabilityType] || '').toString().trim() : '';
+    const gender = m.gender ? (row[m.gender] || '').toString().trim() : '';
 
     return {
       citizenId,
@@ -541,16 +543,18 @@
   /**
    * Normalize an extracted SET Address record
    */
-  function normalizeSetAddressRow(row, mapping) {
-    const citizenId = cleanCitizenId(row[mapping.citizenId]);
-    const studentId = cleanStudentId(row[mapping.studentId]);
+  function normalizeSetAddressRow(row, mapping = {}) {
+    if (!row) return { citizenId: '', studentId: '', fullAddress: '', subdistrict: '', district: '', province: '', zipcode: '', rawRow: row };
+    const m = (mapping && Object.keys(mapping).length > 0) ? mapping : detectColumns(Object.keys(row));
+    const citizenId = cleanCitizenId(m.citizenId ? row[m.citizenId] : row.citizenId);
+    const studentId = cleanStudentId(m.studentId ? row[m.studentId] : row.studentId);
 
-    let fullAddress = mapping.address ? (row[mapping.address] || '').toString().trim() : '';
-    const moo = mapping.moo ? (row[mapping.moo] || '').toString().trim() : '';
-    const subdistrict = mapping.subdistrict ? (row[mapping.subdistrict] || '').toString().trim() : '';
-    const district = mapping.district ? (row[mapping.district] || '').toString().trim() : '';
-    const province = mapping.province ? (row[mapping.province] || '').toString().trim() : '';
-    const zipcode = mapping.zipcode ? (row[mapping.zipcode] || '').toString().trim() : '';
+    let fullAddress = m.address ? (row[m.address] || '').toString().trim() : '';
+    const moo = m.moo ? (row[m.moo] || '').toString().trim() : '';
+    const subdistrict = m.subdistrict ? (row[m.subdistrict] || '').toString().trim() : '';
+    const district = m.district ? (row[m.district] || '').toString().trim() : '';
+    const province = m.province ? (row[m.province] || '').toString().trim() : '';
+    const zipcode = m.zipcode ? (row[m.zipcode] || '').toString().trim() : '';
 
     if (!fullAddress && (subdistrict || district || province)) {
       const parts = [];
@@ -576,7 +580,8 @@
 
   /**
    * Normalize an extracted SET Link table row (Report 3)
-   * Resolves Thai headers like 'เลขประจำตัวนักเรียน' and 'เลขประจำตัวประชาชน'
+   * Resolves Thai headers like 'เลขประจำตัวนักเรียน', 'เลขประจำตัวประชาชน', and 'เลข 13 หลัก'
+   * Uses strictly only studentId and citizenId for linking data
    */
   function normalizeSetLinkRow(row, mapping = {}) {
     if (!row) return { citizenId: '', studentId: '', rawRow: row };
@@ -601,7 +606,10 @@
     // Map address by citizenId and studentId
     const addressByCitizenId = new Map();
     const addressByStudentId = new Map();
-    for (const addr of addressRows) {
+    for (const rawAddr of addressRows) {
+      const addr = (rawAddr && (rawAddr.fullAddress !== undefined || rawAddr.address !== undefined || rawAddr.citizenId !== undefined || rawAddr.studentId !== undefined))
+        ? rawAddr
+        : normalizeSetAddressRow(rawAddr);
       if (addr.citizenId) addressByCitizenId.set(addr.citizenId, addr);
       if (addr.studentId) addressByStudentId.set(addr.studentId, addr);
     }
@@ -615,8 +623,8 @@
 
     for (const rawLink of linkRows) {
       // Support both pre-normalized objects and raw Thai-header Excel rows
-      const link = (rawLink.studentId !== undefined && rawLink.citizenId !== undefined && !rawLink['เลขประจำตัวนักเรียน']) 
-        ? rawLink 
+      const link = (rawLink && rawLink.studentId !== undefined && rawLink.citizenId !== undefined && !rawLink['เลขประจำตัวนักเรียน'] && !rawLink['เลข 13 หลัก'] && !rawLink['เลขประจำตัวประชาชน'])
+        ? rawLink
         : normalizeSetLinkRow(rawLink);
 
       const sid = cleanStudentId(link.studentId);
@@ -680,10 +688,14 @@
     const seenCitizenIds = new Set();
     const seenStudentIds = new Set();
 
-    for (const gen of generalRows) {
+    for (const rawGen of generalRows) {
+      const gen = (rawGen && (rawGen.fullName !== undefined || rawGen.normalizedName !== undefined || rawGen.citizenId !== undefined || rawGen.studentId !== undefined))
+        ? rawGen
+        : normalizeSetGeneralRow(rawGen);
+
       // Resolve IDs with link table if needed
-      let citizenId = gen.citizenId;
-      let studentId = gen.studentId;
+      let citizenId = cleanCitizenId(gen.citizenId);
+      let studentId = cleanStudentId(gen.studentId);
 
       if (!citizenId && studentId && linkByStudentId.has(studentId)) {
         citizenId = linkByStudentId.get(studentId);
