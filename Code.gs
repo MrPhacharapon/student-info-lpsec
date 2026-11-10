@@ -79,16 +79,136 @@ function constantTimeEquals(a, b) {
 }
 
 /**
- * Cryptographically strong or pseudo-random hex generator
+ * Cryptographically strong random hex generator (CSPRNG)
+ * Strictly avoids insecure non-cryptographic pseudo-random number generators.
+ * Supported platforms: Node.js / Web (verified CSPRNG via crypto), Google Apps Script (UNVERIFIED entropy via Utilities.getUuid)
+ *
+ * NOTE ON CSPRNG COMPLIANCE:
+ * - Node.js crypto.randomBytes / Web Crypto getRandomValues are verified CSPRNGs.
+ * - Google Apps Script Utilities.getUuid() produces UUIDv4 strings. In Google Apps Script documentation,
+ *   its underlying cryptographic strength is officially UNVERIFIED (Google does not formally guarantee
+ *   the entropy source of getUuid as a cryptographic PRNG). It is provided as the best available runtime option in GAS.
  */
 function generateRandomHex(byteCount) {
-  if (typeof crypto !== 'undefined' && crypto.randomBytes) {
-    return crypto.randomBytes(byteCount).toString('hex');
+  if (typeof crypto !== 'undefined') {
+    if (typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(byteCount);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+    if (typeof crypto.randomBytes === 'function') {
+      return crypto.randomBytes(byteCount).toString('hex');
+    }
   }
+  if (typeof require !== 'undefined') {
+    try {
+      const nodeCrypto = require('crypto');
+      if (nodeCrypto && typeof nodeCrypto.randomBytes === 'function') {
+        return nodeCrypto.randomBytes(byteCount).toString('hex');
+      }
+    } catch (e) {}
+  }
+  if (typeof Utilities !== 'undefined' && typeof Utilities.getUuid === 'function') {
+    let hex = '';
+    while (hex.length < byteCount * 2) {
+      hex += Utilities.getUuid().replace(/-/g, '').toLowerCase();
+    }
+    return hex.slice(0, byteCount * 2);
+  }
+  const err = new Error("ระบบไม่พบฟังก์ชันสุ่มเข้ารหัสที่ปลอดภัย (CSPRNG is unavailable in this environment)");
+  err.code = 'CSPRNG_UNAVAILABLE';
+  throw err;
+}
+
+/**
+ * Converts a string to a UTF-8 Uint8Array.
+ * Fully compatible with Google Apps Script V8 (where TextEncoder is undefined), Node.js, and web browsers.
+ * Accurately encodes English, Thai, multi-byte Unicode, and surrogate pairs (emojis).
+ * Correctly normalizes signed bytes (-128..127) from Google Apps Script Utilities.newBlob to unsigned (0..255).
+ */
+function stringToUtf8ByteArray(str) {
+  if (typeof str !== 'string') {
+    str = String(str || '');
+  }
+
+  // 1. Google Apps Script native Utilities (returns Java signed bytes: -128..127)
+  if (typeof Utilities !== 'undefined' && typeof Utilities.newBlob === 'function') {
+    const rawSignedBytes = Utilities.newBlob(str).getBytes();
+    const u8 = new Uint8Array(rawSignedBytes.length);
+    for (let i = 0; i < rawSignedBytes.length; i++) {
+      const b = rawSignedBytes[i];
+      u8[i] = b < 0 ? b + 256 : b;
+    }
+    return u8;
+  }
+
+  // 2. Standard Web / Node.js TextEncoder API
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(str);
+  }
+
+  // 3. Pure JavaScript RFC 3629 UTF-8 encoder fallback (handles all Unicode & surrogate pairs without dependencies)
+  return utf8EncodePure(str);
+}
+
+/**
+ * Pure JavaScript RFC 3629 UTF-8 encoder (zero external dependencies)
+ * Safely handles English, Thai, Unicode, surrogate pairs, and unpaired surrogates (replaced with U+FFFD per Unicode standard).
+ */
+function utf8EncodePure(str) {
+  if (typeof str !== 'string') {
+    str = String(str || '');
+  }
+  const bytes = [];
+  for (let i = 0; i < str.length; i++) {
+    let codePoint = str.charCodeAt(i);
+    // Handle surrogate pairs and unpaired surrogates
+    if (codePoint >= 0xD800 && codePoint <= 0xDBFF) {
+      if (i + 1 < str.length) {
+        const next = str.charCodeAt(i + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) {
+          codePoint = ((codePoint - 0xD800) << 10) + (next - 0xDC00) + 0x10000;
+          i++;
+        } else {
+          // Unpaired high surrogate -> replace with U+FFFD per Unicode standard
+          codePoint = 0xFFFD;
+        }
+      } else {
+        // Unpaired high surrogate at end of string -> replace with U+FFFD
+        codePoint = 0xFFFD;
+      }
+    } else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF) {
+      // Unpaired low surrogate -> replace with U+FFFD per Unicode standard
+      codePoint = 0xFFFD;
+    }
+    if (codePoint < 0x80) {
+      bytes.push(codePoint);
+    } else if (codePoint < 0x800) {
+      bytes.push(0xC0 | (codePoint >> 6));
+      bytes.push(0x80 | (codePoint & 0x3F));
+    } else if (codePoint < 0x10000) {
+      bytes.push(0xE0 | (codePoint >> 12));
+      bytes.push(0x80 | ((codePoint >> 6) & 0x3F));
+      bytes.push(0x80 | (codePoint & 0x3F));
+    } else {
+      bytes.push(0xF0 | (codePoint >> 18));
+      bytes.push(0x80 | ((codePoint >> 12) & 0x3F));
+      bytes.push(0x80 | ((codePoint >> 6) & 0x3F));
+      bytes.push(0x80 | (codePoint & 0x3F));
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
+/**
+ * Converts a byte array (signed or unsigned) to a lowercase hex string
+ */
+function bytesToHex(bytes) {
   let hex = '';
-  for (let i = 0; i < byteCount; i++) {
-    const r = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
-    hex += r;
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    const unsigned = b < 0 ? b + 256 : b;
+    hex += unsigned.toString(16).padStart(2, '0');
   }
   return hex;
 }
@@ -101,12 +221,13 @@ function computeHmacSha256Hex(messageStr, keyStr) {
     return crypto.createHmac('sha256', keyStr).update(messageStr).digest('hex');
   }
   if (typeof Utilities !== 'undefined' && Utilities.computeHmacSha256Signature) {
-    const rawBytes = Utilities.computeHmacSha256Signature(messageStr, keyStr);
-    return rawBytes.map(b => (b < 0 ? b + 256 : b).toString(16).padStart(2, '0')).join('');
+    const rawBytes = (Utilities.Charset && Utilities.Charset.UTF_8)
+      ? Utilities.computeHmacSha256Signature(messageStr, keyStr, Utilities.Charset.UTF_8)
+      : Utilities.computeHmacSha256Signature(messageStr, keyStr);
+    return bytesToHex(rawBytes);
   }
-  const enc = new TextEncoder();
-  const rawBytes = hmacSha256Pure(enc.encode(keyStr), enc.encode(messageStr));
-  return Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  const rawBytes = hmacSha256Pure(stringToUtf8ByteArray(keyStr), stringToUtf8ByteArray(messageStr));
+  return bytesToHex(rawBytes);
 }
 
 /**
@@ -241,11 +362,10 @@ function hmacSha256Pure(keyBytes, msgBytes) {
 }
 
 /**
- * Pure JS PBKDF2-HMAC-SHA256
+ * Pure JS PBKDF2-HMAC-SHA256 (compatible with Google Apps Script V8 without TextEncoder)
  */
 function pbkdf2HmacSha256Pure(passwordStr, saltBytes, iterations) {
-  const enc = new TextEncoder();
-  const pwdBytes = enc.encode(passwordStr);
+  const pwdBytes = stringToUtf8ByteArray(passwordStr);
   const saltBuf = new Uint8Array(saltBytes.length + 4);
   saltBuf.set(saltBytes, 0);
   saltBuf[saltBytes.length + 3] = 1;
@@ -260,7 +380,7 @@ function pbkdf2HmacSha256Pure(passwordStr, saltBytes, iterations) {
     }
   }
 
-  return Array.from(t).map(b => b.toString(16).padStart(2, '0')).join('');
+  return bytesToHex(t);
 }
 
 /**
@@ -278,12 +398,18 @@ function checkWritesEnabled(props) {
 
 /**
  * Generates an ephemeral signed admin session token (15-minute TTL)
+ * Requires ADMIN_HMAC_SECRET in ScriptProperties. Never uses fallback secrets.
  */
 function generateAdminSessionToken(props, customTimestamp) {
   const timestamp = (customTimestamp !== undefined ? customTimestamp : Date.now()).toString();
   const nonce = generateRandomHex(16);
   const tokenEpoch = (props && props.getProperty('TOKEN_EPOCH')) || '1';
-  const hmacSecret = (props && props.getProperty('ADMIN_HMAC_SECRET')) || 'default-staging-hmac-secret';
+  const hmacSecret = props ? props.getProperty('ADMIN_HMAC_SECRET') : null;
+  if (!hmacSecret || hmacSecret.trim() === '') {
+    const err = new Error("ระบบยังไม่ได้ตั้งค่าคีย์ลับ HMAC (ADMIN_HMAC_SECRET) ใน Script Properties");
+    err.code = 'AUTH_NOT_CONFIGURED';
+    throw err;
+  }
 
   const dataToSign = `${timestamp}:${nonce}:${tokenEpoch}`;
   const sig = computeHmacSha256Hex(dataToSign, hmacSecret);
@@ -292,9 +418,17 @@ function generateAdminSessionToken(props, customTimestamp) {
 
 /**
  * Validates admin write authorization token
+ * Requires ADMIN_HMAC_SECRET in ScriptProperties. Never uses fallback secrets.
  */
 function validateWriteAuth(request, props) {
   checkWritesEnabled(props);
+
+  const hmacSecret = props ? props.getProperty('ADMIN_HMAC_SECRET') : null;
+  if (!hmacSecret || hmacSecret.trim() === '') {
+    const err = new Error("ระบบยังไม่ได้ตั้งค่าคีย์ลับ HMAC (ADMIN_HMAC_SECRET) ใน Script Properties");
+    err.code = 'AUTH_NOT_CONFIGURED';
+    throw err;
+  }
 
   const token = (request && (request.token || (request.payload && request.payload.token)))
     ? (request.token || request.payload.token).toString().trim()
@@ -330,7 +464,6 @@ function validateWriteAuth(request, props) {
     throw err;
   }
 
-  const hmacSecret = (props && props.getProperty('ADMIN_HMAC_SECRET')) || 'default-staging-hmac-secret';
   const dataToSign = `${timestamp}:${nonce}:${tokenEpoch}`;
   const expectedSig = computeHmacSha256Hex(dataToSign, hmacSecret);
 
@@ -407,10 +540,16 @@ function handleAdminLogout(props) {
 
 /**
  * Server Setup Helper: securely derives and saves PBKDF2 salt & hash into ScriptProperties
+ * Default & minimum iteration count: 600,000 (OWASP Password Storage Cheat Sheet standard for PBKDF2-HMAC-SHA256).
  */
-function setupAdminPassword(newPassword, iterations = 100000) {
+function setupAdminPassword(newPassword, iterations = 600000) {
   if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
     throw new Error("รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร");
+  }
+  if (iterations < 600000) {
+    const err = new Error("จำนวนรอบ PBKDF2 ต่ำกว่ามาตรฐานความปลอดภัย (OWASP กำหนดขั้นต่ำ 600,000 รอบ สำหรับ PBKDF2-HMAC-SHA256)");
+    err.code = 'INSUFFICIENT_ITERATIONS';
+    throw err;
   }
   const saltHex = generateRandomHex(16);
   const hashHex = computePbkdf2HmacSha256Hex(newPassword, saltHex, iterations);
@@ -457,6 +596,7 @@ function doPost(e) {
         }
         break;
       case 'adminLogout':
+        validateWriteAuth(request, props);
         result = handleAdminLogout(props);
         break;
       case 'createStudent':
@@ -1307,8 +1447,13 @@ if (typeof module !== 'undefined' && module.exports) {
     checkWritesEnabled,
     constantTimeEquals,
     generateRandomHex,
+    stringToUtf8ByteArray,
+    utf8EncodePure,
+    bytesToHex,
+    hexToBytes,
     computeHmacSha256Hex,
     computePbkdf2HmacSha256Hex,
+    pbkdf2HmacSha256Pure,
     generateAdminSessionToken,
     validateWriteAuth,
     handleAdminLogin,

@@ -761,17 +761,188 @@ try {
   }, 'Must permit checkWritesEnabled when ENABLE_WRITES is strictly "true"');
 
   // -----------------------------------------------------------------------
-  // 13.2 Password verification with PBKDF2
+  // 13.2 CSPRNG (No Math.random) & HMAC Secret Fallback Elimination
+  // -----------------------------------------------------------------------
+  // 13.2.1 CSPRNG verification
+  const randomHex16 = code.generateRandomHex(16);
+  assert.strictEqual(typeof randomHex16, 'string');
+  assert.strictEqual(randomHex16.length, 32);
+  assert.match(randomHex16, /^[0-9a-f]{32}$/);
+
+  // Verify that Code.gs has ZERO usage of Math.random
+  const fs = require('fs');
+  const codeGsSource = fs.readFileSync('./Code.gs', 'utf8');
+  assert.strictEqual(codeGsSource.includes('Math.random'), false, 'Code.gs MUST NOT contain Math.random()');
+
+  // 13.2.2 HMAC Secret fallback elimination (Fail-closed on missing ADMIN_HMAC_SECRET)
+  const savedHmacSecret = dynamicScriptProps.ADMIN_HMAC_SECRET || dynamicScriptProps.TOKEN_SECRET;
+  delete dynamicScriptProps.ADMIN_HMAC_SECRET;
+  delete dynamicScriptProps.TOKEN_SECRET;
+
+  assert.throws(() => {
+    code.generateAdminSessionToken(global.PropertiesService.getScriptProperties());
+  }, (err) => err.code === 'AUTH_NOT_CONFIGURED', 'generateAdminSessionToken must throw AUTH_NOT_CONFIGURED when ADMIN_HMAC_SECRET is missing');
+
+  assert.throws(() => {
+    code.validateWriteAuth({ token: '12345.abcd.1.ef01' }, global.PropertiesService.getScriptProperties());
+  }, (err) => err.code === 'AUTH_NOT_CONFIGURED', 'validateWriteAuth must throw AUTH_NOT_CONFIGURED when ADMIN_HMAC_SECRET is missing');
+
+  // Restore secure HMAC Secret
+  dynamicScriptProps.ADMIN_HMAC_SECRET = 'secure-random-hmac-secret-32bytes-hex-value';
+
+  // -----------------------------------------------------------------------
+  // 13.2.3 Constant-Time String Equality (Timing Attack Prevention)
+  // -----------------------------------------------------------------------
+  assert.strictEqual(code.constantTimeEquals('secret-token-abc', 'secret-token-abc'), true, 'Identical strings must return true');
+  assert.strictEqual(code.constantTimeEquals('secret-token-abc', 'secret-token-abd'), false, 'Different content same length must return false');
+  assert.strictEqual(code.constantTimeEquals('secret-token-abc', 'secret-token-ab'), false, 'Different length must return false');
+  assert.strictEqual(code.constantTimeEquals('', ''), true, 'Empty strings must return true');
+  assert.strictEqual(code.constantTimeEquals(null, 'abc'), false, 'null must return false');
+  assert.strictEqual(code.constantTimeEquals('abc', undefined), false, 'undefined must return false');
+  assert.strictEqual(code.constantTimeEquals(12345, '12345'), false, 'non-string must return false');
+
+  // -----------------------------------------------------------------------
+  // 13.2.4 UTF-8 Encoding, Byte Handling & Signed/Unsigned Normalization
+  // -----------------------------------------------------------------------
+  // Test strings: ASCII, Thai Unicode, complex characters, surrogate pairs, and unpaired surrogates
+  const testUtf8Strings = [
+    'password123',
+    'รหัสผ่านภาษาไทย๑๒๓๔_ปกศลำปาง',
+    'Mix_ภาษาไทย_and_English_2569!@#$',
+    'Emoji test 🌍 🚀 ✨ \uD83D\uDE00',
+    'unpaired_high_\uD800_end',
+    'unpaired_low_\uDC00_end',
+    '\uD800',
+    '\uDC00',
+    '\uD800\uD800',
+    '\uDC00\uDC00',
+    ''
+  ];
+
+  for (const s of testUtf8Strings) {
+    const expectedBuf = Buffer.from(s, 'utf8');
+    // Test stringToUtf8ByteArray
+    const resBytes = code.stringToUtf8ByteArray(s);
+    assert.strictEqual(Buffer.compare(Buffer.from(resBytes), expectedBuf), 0, `stringToUtf8ByteArray must match Buffer.from for: ${JSON.stringify(s)}`);
+
+    // Test pure RFC 3629 encoder
+    const pureBytes = code.utf8EncodePure(s);
+    assert.strictEqual(Buffer.compare(Buffer.from(pureBytes), expectedBuf), 0, `utf8EncodePure must match Buffer.from for: ${JSON.stringify(s)}`);
+  }
+
+  // Unpaired High/Low surrogate explicit U+FFFD replacement verification
+  const highSurrogateBytes = code.utf8EncodePure('\uD800');
+  const lowSurrogateBytes = code.utf8EncodePure('\uDC00');
+  const ufffdBytes = Buffer.from('\uFFFD', 'utf8'); // 0xEF, 0xBF, 0xBD
+  assert.strictEqual(Buffer.compare(Buffer.from(highSurrogateBytes), ufffdBytes), 0, 'Unpaired high surrogate must be replaced with U+FFFD');
+  assert.strictEqual(Buffer.compare(Buffer.from(lowSurrogateBytes), ufffdBytes), 0, 'Unpaired low surrogate must be replaced with U+FFFD');
+
+  // Byte to hex normalization: signed vs unsigned byte arrays
+  // In Java/GAS: signed byte -1 is 0xFF (255), -128 is 0x80 (128)
+  const signedJavaBytes = [-128, -1, 0, 127];
+  const unsignedBytes = new Uint8Array([128, 255, 0, 127]);
+  assert.strictEqual(code.bytesToHex(signedJavaBytes), '80ff007f', 'bytesToHex must correctly normalize signed Java bytes to hex');
+  assert.strictEqual(code.bytesToHex(unsignedBytes), '80ff007f', 'bytesToHex must correctly format Uint8Array to hex');
+
+  // Test stringToUtf8ByteArray when simulated in Google Apps Script with Utilities.newBlob
+  const savedGlobalUtilities = global.Utilities;
+  try {
+    global.Utilities = {
+      newBlob(str) {
+        return {
+          getBytes() {
+            // Simulate Java signed byte[] array where values >= 128 are negative (-128 to -1)
+            const buf = Buffer.from(str, 'utf8');
+            return Array.from(buf, b => (b >= 128 ? b - 256 : b));
+          }
+        };
+      }
+    };
+    const thaiTest = 'รหัสผ่าน_Thai_2569';
+    const gasSimBytes = code.stringToUtf8ByteArray(thaiTest);
+    assert.ok(gasSimBytes instanceof Uint8Array, 'Must return Uint8Array');
+    assert.strictEqual(Buffer.compare(Buffer.from(gasSimBytes), Buffer.from(thaiTest, 'utf8')), 0, 'GAS Utilities.newBlob signed bytes must be normalized to unsigned Uint8Array');
+  } finally {
+    global.Utilities = savedGlobalUtilities;
+  }
+
+  // -----------------------------------------------------------------------
+  // 13.2.5 PBKDF2-HMAC-SHA256 Known-Answer Test Vectors & Pure JS Engine Verification
+  // -----------------------------------------------------------------------
+  // Reference: PBKDF2-HMAC-SHA256 Known-Answer Test Vectors (IETF draft-josefsson-pbkdf2-test-vectors / Christian Winnerlein)
+  // Note: RFC 6070 standardizes HMAC-SHA1 vectors; the test vectors below test HMAC-SHA256 per standard KAT suites.
+  // Vector 1: Iterations = 1
+  const rfcSalt1 = code.hexToBytes('73616c74'); // "salt"
+  const rfcResult1 = code.pbkdf2HmacSha256Pure('password', rfcSalt1, 1);
+  assert.strictEqual(rfcResult1, '120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b', 'Must match PBKDF2-HMAC-SHA256 KAT iteration=1 vector');
+
+  // Vector 2: Iterations = 2
+  const rfcResult2 = code.pbkdf2HmacSha256Pure('password', rfcSalt1, 2);
+  assert.strictEqual(rfcResult2, 'ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43', 'Must match PBKDF2-HMAC-SHA256 KAT iteration=2 vector');
+
+  // Vector 3: Iterations = 4096
+  const rfcResult4096 = code.pbkdf2HmacSha256Pure('password', rfcSalt1, 4096);
+  assert.strictEqual(rfcResult4096, 'c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a', 'Must match PBKDF2-HMAC-SHA256 KAT iteration=4096 vector');
+
+  // Thai Password PBKDF2 cross-validation: Pure JS vs Node.js crypto.pbkdf2Sync
+  const thaiPass = 'รหัสผ่านครูลำปาง_2569_ปลอดภัย';
+  const thaiSalt = code.hexToBytes('a1b2c3d4e5f6789012345678abcdef01');
+  const pureThaiHash = code.pbkdf2HmacSha256Pure(thaiPass, thaiSalt, 1000);
+  const crypto = require('crypto');
+  const nodeThaiHash = crypto.pbkdf2Sync(thaiPass, Buffer.from('a1b2c3d4e5f6789012345678abcdef01', 'hex'), 1000, 32, 'sha256').toString('hex');
+  assert.strictEqual(pureThaiHash, nodeThaiHash, 'Pure JS PBKDF2 hash of Thai password must match Node.js crypto.pbkdf2Sync byte-for-byte');
+
+  // 13.2.6 Isolated GAS V8 Sandbox Verification (No TextEncoder, No Node crypto)
+  // Ensures pbkdf2HmacSha256Pure runs without ReferenceError: TextEncoder is not defined
+  const vm = require('vm');
+  const isolatedSandbox = {
+    console,
+    Math,
+    Date,
+    Uint8Array,
+    Int32Array,
+    DataView,
+    Array,
+    String,
+    Number,
+    parseInt
+  };
+  vm.createContext(isolatedSandbox);
+  const codeGsRaw = fs.readFileSync('./Code.gs', 'utf8');
+  vm.runInContext(codeGsRaw, isolatedSandbox);
+  assert.strictEqual(typeof isolatedSandbox.TextEncoder, 'undefined', 'TextEncoder must be undefined in isolated sandbox');
+  assert.strictEqual(typeof isolatedSandbox.crypto, 'undefined', 'crypto must be undefined in isolated sandbox');
+  const isolatedResult = isolatedSandbox.pbkdf2HmacSha256Pure('password', isolatedSandbox.hexToBytes('73616c74'), 10);
+  assert.strictEqual(typeof isolatedResult, 'string', 'pbkdf2HmacSha256Pure must succeed in isolated GAS V8 sandbox without TextEncoder');
+  assert.strictEqual(isolatedResult.length, 64, 'Output must be 64-character hex');
+
+  // -----------------------------------------------------------------------
+  // 13.3 PBKDF2 Adaptive Hashing & Security Bounds
   // -----------------------------------------------------------------------
   const testPassword = 'CorrectAdminPassword@2026';
-  code.setupAdminPassword(testPassword, 10000);
-  assert.ok(dynamicScriptProps.ADMIN_PASSWORD_PBKDF2.startsWith('pbkdf2_sha256$10000$'), 'ADMIN_PASSWORD_PBKDF2 must be formatted correctly');
 
-  // Measure verification time with correct password
+  // Subtest: Reject sub-standard iterations (< 600,000 per project OWASP policy)
+  assert.throws(() => {
+    code.setupAdminPassword(testPassword, 10000);
+  }, (err) => err.code === 'INSUFFICIENT_ITERATIONS', 'Must reject 10,000 iterations as INSUFFICIENT_ITERATIONS');
+
+  assert.throws(() => {
+    code.setupAdminPassword(testPassword, 50000);
+  }, (err) => err.code === 'INSUFFICIENT_ITERATIONS', 'Must reject 50,000 iterations as INSUFFICIENT_ITERATIONS');
+
+  assert.throws(() => {
+    code.setupAdminPassword(testPassword, 210000);
+  }, (err) => err.code === 'INSUFFICIENT_ITERATIONS', 'Must reject 210,000 iterations as INSUFFICIENT_ITERATIONS');
+
+  // Setup with OWASP Standard (600,000 iterations)
+  code.setupAdminPassword(testPassword, 600000);
+  assert.ok(dynamicScriptProps.ADMIN_PASSWORD_PBKDF2.startsWith('pbkdf2_sha256$600000$'), 'ADMIN_PASSWORD_PBKDF2 must be formatted correctly with 600,000 iters');
+
+  // Measure verification time with 600,000 iterations
   const t0 = Date.now();
   const loginSuccess = code.handleAdminLogin({ password: testPassword });
-  const pbkdf2Duration = Date.now() - t0;
-  console.log(`    ⏱️ Measured PBKDF2 verification time (10,000 iterations): ${pbkdf2Duration}ms`);
+  const pbkdf2Duration600k = Date.now() - t0;
+  console.log(`    ⏱️ Measured PBKDF2 verification time (600,000 iterations): ${pbkdf2Duration600k}ms`);
   assert.strictEqual(loginSuccess.valid, true, 'valid flag must be true');
   assert.ok(loginSuccess.token && typeof loginSuccess.token === 'string', 'Token must be issued');
   assert.ok(loginSuccess.expiresAt > Date.now(), 'Token must have future expiry');
@@ -801,7 +972,7 @@ try {
   assert.strictEqual(postLoginFail.code, 'INVALID_CREDENTIALS');
 
   // -----------------------------------------------------------------------
-  // 13.3 Token validation (tampered, expired, revoked)
+  // 13.4 Token validation (tampered, expired, revoked) & Logout Authorization
   // -----------------------------------------------------------------------
   // Valid token
   assert.doesNotThrow(() => {
@@ -825,15 +996,28 @@ try {
     code.validateWriteAuth({ token: expiredToken }, global.PropertiesService.getScriptProperties());
   }, (err) => err.code === 'SESSION_EXPIRED', 'Expired token must throw SESSION_EXPIRED');
 
-  // Revoked token via adminLogout bumping TOKEN_EPOCH
-  code.handleAdminLogout(global.PropertiesService.getScriptProperties());
-  assert.strictEqual(dynamicScriptProps.TOKEN_EPOCH, '2', 'TOKEN_EPOCH must be bumped to 2');
+  // 13.4.1 Logout Authorization: Unauthenticated adminLogout via doPost MUST BE REJECTED
+  const postLogoutNoAuth = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'adminLogout', payload: {} }) }
+  }).getContent());
+  assert.strictEqual(postLogoutNoAuth.status, 'error');
+  assert.strictEqual(postLogoutNoAuth.code, 'UNAUTHORIZED', 'Unauthenticated adminLogout must be rejected with UNAUTHORIZED');
+
+  // Authenticated adminLogout via doPost succeeds and bumps TOKEN_EPOCH
+  const currentEpochBeforeLogout = dynamicScriptProps.TOKEN_EPOCH;
+  const postLogoutAuth = JSON.parse(code.doPost({
+    postData: { contents: JSON.stringify({ action: 'adminLogout', payload: { token: sessionToken } }) }
+  }).getContent());
+  assert.strictEqual(postLogoutAuth.status, 'success', 'Authenticated adminLogout must succeed');
+  assert.notStrictEqual(dynamicScriptProps.TOKEN_EPOCH, currentEpochBeforeLogout, 'TOKEN_EPOCH must be incremented on authenticated logout');
+
+  // Old sessionToken must now be rejected as SESSION_REVOKED
   assert.throws(() => {
     code.validateWriteAuth({ token: sessionToken }, global.PropertiesService.getScriptProperties());
-  }, (err) => err.code === 'SESSION_REVOKED', 'Old token must throw SESSION_REVOKED after epoch bump');
+  }, (err) => err.code === 'SESSION_REVOKED', 'Old token must throw SESSION_REVOKED after authenticated logout');
 
   // -----------------------------------------------------------------------
-  // 13.4 Server-side direct POST rejection across all mutations
+  // 13.5 Server-side direct POST rejection across all mutations
   // -----------------------------------------------------------------------
   // Generate fresh token after logout
   const freshLogin = code.handleAdminLogin({ password: testPassword });
@@ -883,7 +1067,7 @@ try {
   assert.strictEqual(dynamicScriptProps.APP_REPORT_DATE, '25/10/2569');
 
   // -----------------------------------------------------------------------
-  // 13.5 Config repoint rejection (Spreadsheet ID immutability)
+  // 13.6 Config repoint rejection (Spreadsheet ID immutability)
   // -----------------------------------------------------------------------
   const baseSpreadsheetId = dynamicScriptProps.APP_SPREADSHEET_ID;
   const repointAttempt = JSON.parse(code.doPost({
@@ -903,7 +1087,7 @@ try {
   assert.notStrictEqual(dynamicScriptProps.APP_SPREADSHEET_ID, 'malicious-attacker-spreadsheet-id', 'Attacker spreadsheetId must be rejected/ignored');
 
   // -----------------------------------------------------------------------
-  // 13.6 Public/SET preview zero-write verification
+  // 13.7 Public/SET preview zero-write verification
   // -----------------------------------------------------------------------
   const sheetDataBefore = JSON.stringify(case13Sheet.data);
   const getStudentRes = JSON.parse(code.doGet({
