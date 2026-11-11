@@ -733,6 +733,9 @@ const google = {
     } else if (targetSection === 'admin') {
       titleEl.text('ตั้งค่าระบบสำหรับผู้ดูแล (Admin)');
       $('#btnToggleAdvancedSearch, #filterPanel').addClass('hidden');
+      if (typeof restoreSetFilesFromLocalDB === 'function') {
+        restoreSetFilesFromLocalDB(true);
+      }
     }
   }
 
@@ -2673,7 +2676,132 @@ const google = {
 
   // ========================================================
   // SET EXCEL IMPORTER & ADMIN PREVIEW (PHASE 1)
+  // LOCAL PERSISTENCE VIA INDEXEDDB (BROWSER-SPECIFIC STORAGE)
   // ========================================================
+
+  const SET_CACHE_DB_NAME = 'LPSEC_SET_Cache_DB';
+  const SET_CACHE_DB_VERSION = 1;
+  const SET_CACHE_STORE_NAME = 'uploaded_files';
+
+  function openSetCacheDB() {
+    return new Promise((resolve, reject) => {
+      if (typeof window === 'undefined' || !window.indexedDB) {
+        return reject(new Error('IndexedDB not supported'));
+      }
+      const req = window.indexedDB.open(SET_CACHE_DB_NAME, SET_CACHE_DB_VERSION);
+      req.onupgradeneeded = function(e) {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(SET_CACHE_STORE_NAME)) {
+          db.createObjectStore(SET_CACHE_STORE_NAME, { keyPath: 'reportType' });
+        }
+      };
+      req.onsuccess = function(e) {
+        resolve(e.target.result);
+      };
+      req.onerror = function(e) {
+        reject(e.target.error);
+      };
+    });
+  }
+
+  function saveSetFileToLocalDB(fileData) {
+    return openSetCacheDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction([SET_CACHE_STORE_NAME], 'readwrite');
+        const store = tx.objectStore(SET_CACHE_STORE_NAME);
+        store.put(fileData);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('saveSetFileToLocalDB warning:', err);
+    });
+  }
+
+  function loadAllSetFilesFromLocalDB() {
+    return openSetCacheDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction([SET_CACHE_STORE_NAME], 'readonly');
+        const store = tx.objectStore(SET_CACHE_STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('loadAllSetFilesFromLocalDB warning:', err);
+      return [];
+    });
+  }
+
+  function clearAllSetFilesFromLocalDB() {
+    return openSetCacheDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction([SET_CACHE_STORE_NAME], 'readwrite');
+        const store = tx.objectStore(SET_CACHE_STORE_NAME);
+        store.clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('clearAllSetFilesFromLocalDB warning:', err);
+    });
+  }
+
+  async function restoreSetFilesFromLocalDB(autoRun = false) {
+    try {
+      const cachedList = await loadAllSetFilesFromLocalDB();
+      if (!cachedList || cachedList.length === 0) return;
+
+      let hasGeneral = false;
+      cachedList.forEach(item => {
+        if (item.reportType === 'general') {
+          state.setImport.generalRows = item.rows || [];
+          state.setImport.generalHeaders = item.headers || [];
+          state.setImport.generalMapping = item.mapping || {};
+          hasGeneral = true;
+
+          $('#fileInfoGeneral').text(`${item.fileName || 'ไฟล์ Excel 1'} (${state.setImport.generalRows.length} รายการ, ${state.setImport.generalHeaders.length} คอลัมน์)`);
+          $('#badgeSetGeneral')
+            .removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700')
+            .addClass('bg-emerald-100 text-emerald-800')
+            .text(`✓ ${state.setImport.generalRows.length} แถว`);
+        } else if (item.reportType === 'address') {
+          state.setImport.addressRows = item.rows || [];
+          state.setImport.addressHeaders = item.headers || [];
+          state.setImport.addressMapping = item.mapping || {};
+
+          $('#fileInfoAddress').text(`${item.fileName || 'ไฟล์ Excel 2'} (${state.setImport.addressRows.length} รายการ, ${state.setImport.addressHeaders.length} คอลัมน์)`);
+          $('#badgeSetAddress')
+            .removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700')
+            .addClass('bg-emerald-100 text-emerald-800')
+            .text(`✓ ${state.setImport.addressRows.length} แถว`);
+        } else if (item.reportType === 'link') {
+          state.setImport.linkRows = item.rows || [];
+          state.setImport.linkHeaders = item.headers || [];
+          state.setImport.linkMapping = item.mapping || {};
+
+          $('#fileInfoLink').text(`${item.fileName || 'ไฟล์ Excel 3'} (${state.setImport.linkRows.length} รายการ, ${state.setImport.linkHeaders.length} คอลัมน์)`);
+          $('#badgeSetLink')
+            .removeClass('bg-gray-100 text-gray-500')
+            .addClass('bg-emerald-100 text-emerald-800')
+            .text(`✓ ${state.setImport.linkRows.length} แถว`);
+        }
+      });
+
+      if (hasGeneral && state.setImport.generalRows.length > 0) {
+        $('#btnRunSetPreview').prop('disabled', false);
+        $('#badgeLocalCacheStatus').removeClass('hidden');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+
+        // If requested to auto-run and data is ready, run comparison silently
+        if (autoRun && state.allStudents && state.allStudents.length > 0 && !state.setImport.diffResult) {
+          executeSetImportPreview(true); // true = silent/no scroll
+        }
+      }
+    } catch (err) {
+      console.warn('restoreSetFilesFromLocalDB error:', err);
+    }
+  }
 
   function initSetImportEvents() {
     // 1. Admin Sub-Navigation Tabs
@@ -2773,6 +2901,9 @@ const google = {
         $('#setDiffModal').addClass('hidden');
       }
     });
+
+    // Restore cached files from IndexedDB if available
+    restoreSetFilesFromLocalDB(false);
   }
 
   // Handle Reading & Validating Excel file client-side
@@ -2843,6 +2974,21 @@ const google = {
         });
         $('#btnRunSetPreview').prop('disabled', !isGeneralValid || state.setImport.generalRows.length === 0);
 
+        // Save file to IndexedDB for browser-specific persistence
+        saveSetFileToLocalDB({
+          reportType: reportType,
+          fileName: file.name,
+          fileSize: file.size,
+          rows: rows,
+          headers: headers,
+          mapping: validation.detected,
+          valid: validation.valid,
+          savedAt: new Date().toISOString()
+        }).then(() => {
+          $('#badgeLocalCacheStatus').removeClass('hidden');
+          if (typeof lucide !== 'undefined') lucide.createIcons();
+        });
+
       } catch (err) {
         Swal.fire('ข้อผิดพลาดในการอ่านไฟล์', err.message, 'error');
       }
@@ -2871,13 +3017,13 @@ const google = {
   }
 
   // Execute SET Data Preview
-  function executeSetImportPreview() {
+  function executeSetImportPreview(isSilent = false) {
     if (!state.setImport.generalRows || state.setImport.generalRows.length === 0) {
-      Swal.fire('แจ้งเตือน', 'กรุณาเลือกไฟล์รายงานข้อมูลนักเรียน (ไฟล์ที่ 1) ก่อนเริ่มประมวลผล', 'warning');
+      if (!isSilent) Swal.fire('แจ้งเตือน', 'กรุณาเลือกไฟล์รายงานข้อมูลนักเรียน (ไฟล์ที่ 1) ก่อนเริ่มประมวลผล', 'warning');
       return;
     }
 
-    showLoading(true);
+    if (!isSilent) showLoading(true);
 
     setTimeout(() => {
       try {
@@ -2916,18 +3062,23 @@ const google = {
         // 6. Show Results Container
         $('#setPreviewResultsContainer').removeClass('hidden');
 
-        showLoading(false);
-
-        // Scroll to results
-        $('html, body').animate({
-          scrollTop: $('#setPreviewResultsContainer').offset().top - 80
-        }, 500);
+        if (!isSilent) {
+          showLoading(false);
+          // Scroll to results
+          $('html, body').animate({
+            scrollTop: $('#setPreviewResultsContainer').offset().top - 80
+          }, 500);
+        }
 
       } catch (err) {
-        showLoading(false);
-        Swal.fire('เกิดข้อผิดพลาดในการประมวลผล', err.message, 'error');
+        if (!isSilent) {
+          showLoading(false);
+          Swal.fire('เกิดข้อผิดพลาดในการประมวลผล', err.message, 'error');
+        } else {
+          console.warn('executeSetImportPreview silent error:', err);
+        }
       }
-    }, 200);
+    }, isSilent ? 50 : 200);
   }
 
   // Update Summary Badges and Tab Counters
@@ -3411,6 +3562,21 @@ const google = {
     $('#btnRunSetPreview').prop('disabled', true);
     $('#setPreviewResultsContainer').addClass('hidden');
     $('#setValidationAlertBox').addClass('hidden');
+
+    // Clear IndexedDB persistence
+    clearAllSetFilesFromLocalDB().then(() => {
+      $('#badgeLocalCacheStatus').addClass('hidden');
+      if (typeof Swal !== 'undefined' && Swal.fire) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'ล้างข้อมูลไฟล์ที่จำไว้ในเครื่องเรียบร้อยแล้ว',
+          showConfirmButton: false,
+          timer: 2000
+        });
+      }
+    });
   }
 
   // ========================================================
