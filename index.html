@@ -461,6 +461,7 @@
                   <th class="px-4 py-2">ห้องเรียน/หน่วยบริการ</th>
                   <th class="px-4 py-2">ประเภทการบริการ</th>
                   <th class="px-4 py-2">ครูผู้รับผิดชอบ</th>
+                  <th class="px-4 py-2 text-center whitespace-nowrap">ประวัติ</th>
                 </tr>
               </thead>
               <tbody id="drillDownTableBody" class="divide-y divide-emerald-100/30 text-gray-700">
@@ -748,29 +749,6 @@
               </div>
             </div>
 
-            <!-- Menu Visibility Toggles -->
-            <div class="flex flex-col gap-3 border-t border-emerald-100/30 pt-4">
-              <label class="text-sm font-semibold text-gray-700">เปิด/ปิด เมนูที่มองเห็นบนหน้าเว็บ</label>
-              <p class="text-xs text-gray-500">ควบคุมการแสดงผลเมนูในแถบเมนูหลัก (การตั้งค่าจะหายไปเมื่อรีเฟรชหน้าเว็บ)</p>
-              <div class="flex flex-col gap-2.5 pl-1">
-                <label class="flex items-center gap-3 cursor-pointer">
-                  <div class="relative">
-                    <input type="checkbox" id="toggleNavStudents" class="sr-only peer">
-                    <div class="w-10 h-5 bg-gray-300 rounded-full peer-checked:bg-emerald-600 transition-colors"></div>
-                    <div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
-                  </div>
-                  <span class="text-sm text-gray-700">แฟ้มรายชื่อนักเรียน</span>
-                </label>
-                <label class="flex items-center gap-3 cursor-pointer">
-                  <div class="relative">
-                    <input type="checkbox" id="toggleNavPivot" class="sr-only peer">
-                    <div class="w-10 h-5 bg-gray-300 rounded-full peer-checked:bg-emerald-600 transition-colors"></div>
-                    <div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
-                  </div>
-                  <span class="text-sm text-gray-700">ตารางวิเคราะห์ความสัมพันธ์ของข้อมูล</span>
-                </label>
-              </div>
-            </div>
 
             <!-- Save settings action -->
             <div class="flex items-center justify-end gap-3 border-t border-emerald-100/50 pt-4 mt-2">
@@ -1291,6 +1269,159 @@
           การตรวจสอบข้อมูลในหน้านี้ไม่เปลี่ยนแปลงข้อมูลจริงในฐานข้อมูล
         </span>
         <button type="button" id="btnCloseSetDiffModalBtn" class="glass-btn-secondary text-xs">ปิดหน้าต่าง</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- STUDENT PROFILE MODAL (Public / User Detailed View - Zero PII) -->
+  <!-- ======================================================== -->
+  <div id="studentProfileModal" class="fixed inset-0 bg-emerald-950/40 backdrop-blur-sm z-50 justify-center items-center p-3 md:p-4 hidden flex">
+    <div class="bg-white/95 backdrop-blur-xl border border-emerald-100 rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[92vh] transition-all">
+      
+      <!-- Modal Header (Mint Gradient) -->
+      <div class="bg-gradient-to-r from-emerald-800 to-teal-800 p-5 md:p-6 text-white flex items-start justify-between relative overflow-hidden shrink-0">
+        <div class="absolute -right-6 -bottom-8 w-32 h-32 rounded-full bg-white/10 blur-xl pointer-events-none"></div>
+
+        <div class="flex items-center gap-3.5 md:gap-4 relative z-10">
+          <div id="profileAvatar" class="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-white/20 border-2 border-white/40 backdrop-blur-md flex items-center justify-center text-white text-xl md:text-2xl font-bold shadow-inner shrink-0">
+            -
+          </div>
+          <div>
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 id="profileStudentName" class="text-base md:text-xl font-bold tracking-tight">ชื่อ-สกุล</h2>
+              <span id="profileStudentIdBadge" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/30 text-emerald-100 border border-emerald-400/40">
+                รหัส -
+              </span>
+            </div>
+            <div class="flex items-center gap-2 mt-1 text-xs text-emerald-100/90">
+              <span id="profileGenderAge">-</span>
+              <span>•</span>
+              <span id="profileAgeRange" class="bg-white/20 px-2 py-0.5 rounded text-[11px]">-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 relative z-10">
+          <span id="profileServiceBadge" class="px-3 py-1 rounded-full text-xs font-bold bg-cyan-400 text-cyan-950 shadow-sm shrink-0">
+            -
+          </span>
+          <button type="button" id="btnCloseStudentProfileModal" class="p-1.5 text-white/80 hover:text-white rounded-lg hover:bg-white/10 transition" title="ปิดหน้าต่าง">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Modal Body Grid (2 Columns) -->
+      <div class="p-5 md:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 overflow-y-auto flex-1 bg-slate-50/50">
+        
+        <!-- Column 1: Education & Services -->
+        <div class="bg-white rounded-2xl p-4 border border-emerald-100/80 shadow-sm flex flex-col gap-3">
+          <h3 class="text-xs font-bold text-emerald-900 flex items-center gap-2 uppercase tracking-wide border-b border-emerald-50 pb-2">
+            <i data-lucide="graduation-cap" class="w-4 h-4 text-emerald-700"></i>
+            <span>ข้อมูลการศึกษา & บริการ</span>
+          </h3>
+
+          <div class="flex flex-col gap-2.5 text-xs">
+            <div class="flex items-start justify-between">
+              <span class="text-slate-500">ห้องเรียน/หน่วยบริการ:</span>
+              <span id="profileClassroom" class="font-bold text-slate-800 text-right">-</span>
+            </div>
+            <div class="flex items-start justify-between">
+              <span class="text-slate-500">ครูผู้รับผิดชอบ:</span>
+              <span id="profileTeacher" class="font-bold text-emerald-800 text-right">-</span>
+            </div>
+            <div class="flex items-start justify-between">
+              <span class="text-slate-500">วันเดือนปีเกิด:</span>
+              <span id="profileDob" class="font-semibold text-slate-700 text-right">-</span>
+            </div>
+            <div class="flex flex-col pt-1 border-t border-slate-100">
+              <span class="text-slate-500 mb-1 flex items-center gap-1">
+                <i data-lucide="home" class="w-3.5 h-3.5 text-slate-400"></i>
+                ที่อยู่ตามทะเบียนบ้าน:
+              </span>
+              <span id="profileAddress" class="text-slate-700 bg-slate-100/70 p-2.5 rounded-xl leading-relaxed text-[11px] font-normal">
+                -
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Column 2: Disability & Documents -->
+        <div class="bg-white rounded-2xl p-4 border border-emerald-100/80 shadow-sm flex flex-col gap-3">
+          <h3 class="text-xs font-bold text-emerald-900 flex items-center gap-2 uppercase tracking-wide border-b border-emerald-50 pb-2">
+            <i data-lucide="heart-pulse" class="w-4 h-4 text-emerald-700"></i>
+            <span>ความพิการ & ความพร้อมเอกสาร</span>
+          </h3>
+
+          <div class="flex flex-col gap-2.5 text-xs">
+            <!-- Disability by Card -->
+            <div class="bg-emerald-50/70 border border-emerald-100 p-2.5 rounded-xl">
+              <span class="text-[11px] text-emerald-700 font-medium block">ประเภทความพิการ (ตามบัตรคนพิการ)</span>
+              <span id="profileDisCard" class="text-xs font-bold text-emerald-950 mt-0.5 block">-</span>
+            </div>
+
+            <!-- Disability by Screening -->
+            <div class="bg-cyan-50/70 border border-cyan-100 p-2.5 rounded-xl">
+              <span class="text-[11px] text-cyan-800 font-medium block">ประเภทความพิการ (ตามแบบคัดกรองฯ)</span>
+              <span id="profileDisScreen" class="text-xs font-bold text-cyan-950 mt-0.5 block">-</span>
+            </div>
+
+            <!-- Document Checklist -->
+            <div class="mt-1 flex flex-col gap-1.5">
+              <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">ความสมบูรณ์ของเอกสาร:</span>
+              
+              <div class="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100">
+                <span class="text-slate-700">1. บัตรประจำตัวคนพิการ</span>
+                <span id="profileDocCard" class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                  มีบัตร
+                </span>
+              </div>
+
+              <div class="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100">
+                <span class="text-slate-700">2. เอกสารรับรองความพิการ</span>
+                <span id="profileDocCert" class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                  มีเอกสาร
+                </span>
+              </div>
+
+              <div class="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100">
+                <span class="text-slate-700">3. แบบคัดกรองทางการศึกษา</span>
+                <span id="profileDocScreen" class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                  มีแบบคัดกรอง
+                </span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="p-4 bg-white border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+        <div class="flex items-center gap-2">
+          <button type="button" id="btnProfilePrevStudent" class="px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition flex items-center gap-1.5 active:scale-95">
+            <i data-lucide="chevron-left" class="w-3.5 h-3.5"></i>
+            <span>คนก่อนหน้า</span>
+          </button>
+          <button type="button" id="btnProfileNextStudent" class="px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition flex items-center gap-1.5 active:scale-95">
+            <span>คนถัดไป</span>
+            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+          </button>
+          <span id="profileCurrentIndexBadge" class="text-xs text-slate-400 font-mono ml-1">-</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button type="button" id="btnProfilePrint" class="px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold flex items-center gap-1.5 transition">
+            <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+            <span>พิมพ์ประวัติ</span>
+          </button>
+          <button type="button" id="btnCloseStudentProfileModalBtn" class="px-5 py-2 rounded-xl bg-slate-800 text-white hover:bg-slate-900 text-xs font-semibold transition shadow-sm">
+            ปิดหน้าต่าง
+          </button>
+        </div>
       </div>
 
     </div>

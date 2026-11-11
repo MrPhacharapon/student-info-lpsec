@@ -118,6 +118,8 @@ const google = {
   const state = {
     adminToken: (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('ADMIN_SESSION_TOKEN') : null),
     allStudents: [],
+    currentProfileStudents: [],
+    currentProfileIndex: -1,
     filteredStudents: [],
     classrooms: [],
     teachers: [],
@@ -486,13 +488,6 @@ const google = {
       icon.toggleClass('rotate-180');
     });
 
-    // Admin toggle switches: show/hide menu items
-    $('#toggleNavStudents').on('change', function() {
-      $('#navStudents').toggle(this.checked);
-    });
-    $('#toggleNavPivot').on('change', function() {
-      $('#navPivot').toggle(this.checked);
-    });
 
     // Text Search
     $('#searchName').on('input', function() {
@@ -1090,21 +1085,20 @@ const google = {
         cellsHtml += getColumnCellHtml(colId, student, svcText, docBadges, dobText, statusLabels, displayDis);
       });
 
-      let actionButtons = '';
+      let actionButtons = `
+        <button type="button" onclick="openStudentProfileByRow(${student.rowNumber})" class="p-1.5 px-2.5 text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition font-semibold inline-flex items-center gap-1 shadow-xs" title="ดูข้อมูลประวัตินักเรียน">
+          <i data-lucide="id-card" class="w-3.5 h-3.5 text-emerald-700"></i>
+          <span>ดูข้อมูล</span>
+        </button>
+      `;
       if (state.adminToken) {
-        actionButtons = `
+        actionButtons += `
           <button onclick="editStudentByRow(${student.rowNumber})" class="p-2 text-emerald-700 hover:bg-emerald-500/10 rounded-lg transition" title="แก้ไข">
             <i data-lucide="edit-3" class="w-4 h-4"></i>
           </button>
           <button onclick="deleteStudentByRow(${student.rowNumber}, '${student.name.replace(/'/g, "\\'")}', '${(student.studentId || '').replace(/'/g, "\\'")}')" class="p-2 text-red-600 hover:bg-red-500/10 rounded-lg transition" title="ลบ">
             <i data-lucide="trash-2" class="w-4 h-4"></i>
           </button>
-        `;
-      } else {
-        actionButtons = `
-          <span class="inline-flex items-center gap-1 text-xs text-gray-400 bg-gray-100/80 px-2 py-1 rounded-md" title="เข้าสู่ระบบ Admin เพื่อแก้ไขหรือลบ">
-            <i data-lucide="lock" class="w-3.5 h-3.5"></i> ล็อก
-          </span>
         `;
       }
 
@@ -2183,12 +2177,18 @@ const google = {
 
         tbody.append(`
           <tr class="hover:bg-emerald-50/20 border-b border-emerald-100/20">
-            <td class="px-4 py-2 font-medium text-gray-800 sticky-col">${s.name}</td>
+            <td class="px-4 py-2 font-medium text-emerald-950 hover:text-emerald-700 hover:underline cursor-pointer sticky-col" onclick="openStudentProfileByRow(${s.rowNumber})">${s.name}</td>
             <td class="px-4 py-2">${displayDis}</td>
             <td class="px-4 py-2 text-center">${ageText}</td>
             <td class="px-4 py-2">${s.classroom}</td>
             <td class="px-4 py-2">${svcText}</td>
             <td class="px-4 py-2">${s.teacher}</td>
+            <td class="px-4 py-2 text-center whitespace-nowrap">
+              <button type="button" onclick="openStudentProfileByRow(${s.rowNumber})" class="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold text-xs transition inline-flex items-center gap-1 shadow-xs" title="ดูข้อมูลประวัตินักเรียน">
+                <i data-lucide="id-card" class="w-3.5 h-3.5 text-emerald-700"></i>
+                <span>ดูข้อมูล</span>
+              </button>
+            </td>
           </tr>
         `);
       });
@@ -3365,3 +3365,153 @@ const google = {
     $('#setPreviewResultsContainer').addClass('hidden');
     $('#setValidationAlertBox').addClass('hidden');
   }
+
+  // ========================================================
+  // STUDENT PROFILE MODAL CONTROLLERS (ZERO-PII COMPLIANT)
+  // ========================================================
+  function openStudentProfileByRow(rowNumber, studentList = null) {
+    const list = studentList || (state.filteredStudents && state.filteredStudents.length > 0 ? state.filteredStudents : state.allStudents);
+    const index = list.findIndex(s => s.rowNumber === rowNumber);
+    if (index === -1) return;
+    
+    state.currentProfileStudents = list;
+    state.currentProfileIndex = index;
+    renderStudentProfileModal();
+    $('#studentProfileModal').removeClass('hidden');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  function renderStudentProfileModal() {
+    if (state.currentProfileIndex < 0 || !state.currentProfileStudents[state.currentProfileIndex]) return;
+    const s = state.currentProfileStudents[state.currentProfileIndex];
+    const total = state.currentProfileStudents.length;
+    const idx = state.currentProfileIndex;
+
+    // Avatar initial letter
+    let cleanName = (s.name || '').replace(/^(เด็กชาย|เด็กหญิง|นาย|นางสาว|ด\.ช\.|ด\.ญ\.)/, '').trim();
+    let initialLetter = cleanName.charAt(0) || (s.name ? s.name.charAt(0) : 'น');
+
+    $('#profileAvatar').text(initialLetter);
+    $('#profileStudentName').text(s.name || '-');
+    
+    const sid = s.studentId || (s.rowNumber ? `(แถวที่ ${s.rowNumber})` : '-');
+    $('#profileStudentIdBadge').text(`รหัส ${sid}`);
+
+    // Gender detection from name prefix
+    let gender = 'ไม่ระบุ';
+    if (s.name) {
+      if (s.name.startsWith('เด็กชาย') || s.name.startsWith('นาย') || s.name.startsWith('ด.ช.')) gender = 'เพศชาย';
+      else if (s.name.startsWith('เด็กหญิง') || s.name.startsWith('นางสาว') || s.name.startsWith('ด.ญ.')) gender = 'เพศหญิง';
+    }
+    
+    const age = calculateAge(s.dateOfBirth, s);
+    const ageStr = s.age || (age !== null ? `${age} ปี` : 'ไม่ระบุอายุ');
+    $('#profileGenderAge').text(`${gender} • อายุ ${ageStr}`);
+
+    // Age range
+    let ageRange = 'ไม่ระบุช่วง';
+    if (age !== null) {
+      if (age < 3) ageRange = 'ช่วงอายุน้อยกว่า 3 ปี';
+      else if (age <= 6) ageRange = 'ช่วงอายุ 3 - 6 ปี';
+      else ageRange = 'ช่วงอายุ 7 ปีขึ้นไป';
+    }
+    $('#profileAgeRange').text(ageRange);
+
+    // Service badge
+    let svcText = 'รับบริการในศูนย์ / อื่นๆ';
+    let svcClass = 'bg-emerald-400 text-emerald-950';
+    if (s.serviceUnit === 1) {
+      svcText = 'รับบริการที่หน่วยบริการ';
+      svcClass = 'bg-cyan-400 text-cyan-950';
+    } else if (s.serviceAdjustHome === 1) {
+      svcText = 'รับบริการที่บ้าน (ปรับบ้าน)';
+      svcClass = 'bg-teal-400 text-teal-950';
+    } else if (s.serviceInCenter === 1) {
+      svcText = 'รับบริการที่ศูนย์';
+      svcClass = 'bg-emerald-400 text-emerald-950';
+    }
+    const badge = $('#profileServiceBadge');
+    badge.text(svcText);
+    badge.attr('class', `px-3 py-1 rounded-full text-xs font-bold shadow-sm shrink-0 ${svcClass}`);
+
+    // Education & Classroom
+    $('#profileClassroom').text(s.classroom || '-');
+    $('#profileTeacher').text(s.teacher || '-');
+    $('#profileDob').text(toThaiBuddhistDateString(s.dateOfBirth));
+    $('#profileAddress').text(s.address || '-');
+
+    // Disabilities (Card vs Screening)
+    const disCard = getNormalizedDisability(s.disabilityByCard, true);
+    $('#profileDisCard').text(disCard !== 'ยังไม่มีบัตรคนพิการ' ? disCard : 'ยังไม่มีบัตรคนพิการ');
+    
+    const disScreen = getNormalizedDisability(s.disabilityByScreening, false);
+    $('#profileDisScreen').text(disScreen !== 'ไม่ระบุ' ? disScreen : '-');
+
+    // Document Checklist indicators
+    setProfileDocIndicator('#profileDocCard', s.hasDisabilityCard === 1, 'มีบัตรคนพิการ', 'ยังไม่มีบัตร');
+    setProfileDocIndicator('#profileDocCert', s.hasDisabilityCert === 1, 'มีเอกสารรับรอง', 'ไม่มีเอกสาร');
+    setProfileDocIndicator('#profileDocScreen', s.hasEducationScreening === 1, 'มีแบบคัดกรอง', 'ไม่มีแบบคัดกรอง');
+
+    // Navigation index
+    $('#profileCurrentIndexBadge').text(`${idx + 1} / ${total}`);
+
+    // Disable prev/next at bounds
+    $('#btnProfilePrevStudent').prop('disabled', idx === 0).toggleClass('opacity-40 cursor-not-allowed', idx === 0);
+    $('#btnProfileNextStudent').prop('disabled', idx === total - 1).toggleClass('opacity-40 cursor-not-allowed', idx === total - 1);
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  function setProfileDocIndicator(selector, hasDoc, trueText, falseText) {
+    const el = $(selector);
+    if (hasDoc) {
+      el.attr('class', 'inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full');
+      el.html(`<i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600"></i><span>${trueText}</span>`);
+    } else {
+      el.attr('class', 'inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full');
+      el.html(`<i data-lucide="x-circle" class="w-3.5 h-3.5 text-slate-400"></i><span>${falseText}</span>`);
+    }
+  }
+
+  function closeStudentProfileModal() {
+    $('#studentProfileModal').addClass('hidden');
+  }
+
+  // Profile modal event listeners
+  $(document).ready(function() {
+    $('#btnCloseStudentProfileModal, #btnCloseStudentProfileModalBtn').click(closeStudentProfileModal);
+    
+    $('#studentProfileModal').click(function(e) {
+      if (e.target === this) closeStudentProfileModal();
+    });
+
+    $('#btnProfilePrevStudent').click(function() {
+      if (state.currentProfileIndex > 0) {
+        state.currentProfileIndex--;
+        renderStudentProfileModal();
+      }
+    });
+
+    $('#btnProfileNextStudent').click(function() {
+      if (state.currentProfileIndex < state.currentProfileStudents.length - 1) {
+        state.currentProfileIndex++;
+        renderStudentProfileModal();
+      }
+    });
+
+    $('#btnProfilePrint').click(function() {
+      window.print();
+    });
+
+    $(document).keydown(function(e) {
+      if (!$('#studentProfileModal').hasClass('hidden')) {
+        if (e.key === 'Escape') closeStudentProfileModal();
+        else if (e.key === 'ArrowLeft') $('#btnProfilePrevStudent').click();
+        else if (e.key === 'ArrowRight') $('#btnProfileNextStudent').click();
+      }
+    });
+  });
+
+  // Expose to window for inline onclick handlers
+  window.openStudentProfileByRow = openStudentProfileByRow;
+  window.closeStudentProfileModal = closeStudentProfileModal;
