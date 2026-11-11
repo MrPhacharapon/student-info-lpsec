@@ -407,6 +407,26 @@ const google = {
           title: 'เข้าสู่แผงควบคุมระบบ (Admin)',
           text: 'กรุณากรอกรหัสผ่านเพื่อเข้าใช้งานตั้งค่าระบบ',
           input: 'password',
+          inputValue: '',
+          inputAttributes: {
+            autocomplete: 'new-password',
+            autocorrect: 'off',
+            autocapitalize: 'off',
+            spellcheck: 'false'
+          },
+          didOpen: () => {
+            const input = Swal.getInput();
+            if (input) {
+              input.value = '';
+              input.setAttribute('autocomplete', 'new-password');
+              input.setAttribute('readonly', 'readonly');
+              setTimeout(() => {
+                input.removeAttribute('readonly');
+                input.value = '';
+                input.focus();
+              }, 60);
+            }
+          },
           inputPlaceholder: 'กรอกรหัสผ่านผู้ดูแลระบบ...',
           showCancelButton: true,
           confirmButtonText: 'เข้าสู่ระบบ',
@@ -571,34 +591,52 @@ const google = {
       });
     });
 
-    // Admin Fetch Tabs Button
-    $('#btnAdminFetchTabs').click(function() {
+    // Admin Fetch Tabs Helper (Supports both automatic background fetch and manual button click)
+    function fetchAdminSheetTabs(isAuto = false) {
       const url = $('#adminSpreadsheetUrl').val();
       if (!url) {
-        Swal.fire('คำเตือน', 'กรุณากรอกลิงก์ Google Sheet', 'warning');
+        if (!isAuto) Swal.fire('คำเตือน', 'กรุณากรอกลิงก์ Google Sheet', 'warning');
         return;
       }
       
-      showLoading(true);
+      const currentSelectedSheet = (state.appConfig && state.appConfig.sheetName) || $('#adminSheetTabSelect').val();
+      
+      if (!isAuto) showLoading(true);
       google.script.run
         .withSuccessHandler(function(res) {
-          showLoading(false);
-          if (res.success) {
+          if (!isAuto) showLoading(false);
+          const isSuccess = res && (res.success || res.status === 'success');
+          const tabs = res && (res.tabs || (res.data && res.data.tabs));
+          if (isSuccess && tabs && tabs.length > 0) {
             const select = $('#adminSheetTabSelect').empty();
-            res.tabs.forEach(tab => {
-              select.append(`<option value="${tab.name}">${tab.name} (${tab.id})</option>`);
+            tabs.forEach(tab => {
+              const isSelected = (tab.name === currentSelectedSheet) ? 'selected' : '';
+              select.append(`<option value="${tab.name}" ${isSelected}>${tab.name} (${tab.id})</option>`);
             });
-            select.trigger('change');
-            Swal.fire('สำเร็จ', 'ดึงข้อมูลแผ่นงานเรียบร้อยแล้ว กรุณาเลือกแผ่นงานที่ต้องการด้านล่าง', 'success');
+            if (currentSelectedSheet) {
+              select.val(currentSelectedSheet);
+            }
+            if (!isAuto) {
+              Swal.fire('สำเร็จ', 'ดึงข้อมูลแผ่นงานเรียบร้อยแล้ว กรุณาเลือกแผ่นงานที่ต้องการด้านล่าง', 'success');
+            }
           } else {
-            Swal.fire('ข้อผิดพลาด', 'ไม่สามารถเชื่อมต่อชีตได้: ' + res.message, 'error');
+            if (!isAuto) {
+              Swal.fire('ข้อผิดพลาด', 'ไม่สามารถเชื่อมต่อชีตได้: ' + ((res && res.message) || 'ไม่พบรายชื่อแผ่นงาน'), 'error');
+            }
           }
         })
         .withFailureHandler(function(err) {
-          showLoading(false);
-          Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
+          if (!isAuto) {
+            showLoading(false);
+            Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
+          }
         })
         .getSheetTabsFromUrl(url);
+    }
+
+    // Admin Fetch Tabs Button
+    $('#btnAdminFetchTabs').click(function() {
+      fetchAdminSheetTabs(false);
     });
 
     // Admin Save Settings Button
@@ -761,6 +799,8 @@ const google = {
       
       const tabSelect = $('#adminSheetTabSelect').empty();
       tabSelect.append(`<option value="${state.appConfig.sheetName}">${state.appConfig.sheetName}</option>`);
+      // Auto-fetch all sheet tabs in the background upon opening admin panel
+      fetchAdminSheetTabs(true);
       
       if (state.appConfig.rawReportDate) {
         const parts = state.appConfig.rawReportDate.split('/');
@@ -855,9 +895,12 @@ const google = {
     const statusLater = $('#filterStatusLater').is(':checked');
 
     state.filteredStudents = state.allStudents.filter(s => {
-      // 1. Search Name
-      if (searchVal && s.name.toLowerCase().indexOf(searchVal) === -1) {
-        return false;
+      // 1. Search Name (supports partial words, multi-word matching, vowels & accents)
+      if (searchVal) {
+        const terms = searchVal.split(/\s+/).filter(Boolean);
+        const nameLower = (s.name || '').toLowerCase();
+        const allTermsMatch = terms.every(term => nameLower.indexOf(term) !== -1);
+        if (!allTermsMatch) return false;
       }
       // 2. Classroom dropdown
       if (classroomVal && s.classroom !== classroomVal) {
@@ -931,6 +974,15 @@ const google = {
     // Update Stats badge
     $('#filteredCountBadge').text(state.filteredStudents.length);
     $('#totalCountBadge').text(state.allStudents.length);
+
+    // Live Real-Time Search: display matching students under "รายละเอียดของข้อมูล: นักเรียนทั้งหมด (ตามตัวกรอง)"
+    if (searchVal) {
+      state.currentDrillDownType = 'total';
+      showDrillDownDetails('total', '', false);
+    } else if (state.currentDrillDownType === 'total') {
+      $('#chartDrillDownContainer').addClass('hidden');
+      state.currentDrillDownType = null;
+    }
   }
 
   const COLUMN_DEFINITIONS = {
@@ -2031,7 +2083,8 @@ const google = {
   }
 
   // Drill-down Student Details from Chart Click
-  function showDrillDownDetails(type, label) {
+  function showDrillDownDetails(type, label, showToast = true) {
+    state.currentDrillDownType = type;
     let filtered = [];
     let groupTitle = '';
 
@@ -2146,18 +2199,20 @@ const google = {
     
     lucide.createIcons();
 
-    // Show toast notification in bottom-right corner instead of scrolling
-    Swal.fire({
-      toast: true,
-      position: 'bottom-end',
-      icon: 'info',
-      title: 'แสดงรายละเอียดด้านล่าง',
-      showConfirmButton: false,
-      timer: 2000,
-      background: '#0f172a',
-      color: '#ffffff',
-      iconColor: '#38bdf8'
-    });
+    // Show toast notification only when invoked from user click, avoiding spam on live keystrokes
+    if (showToast) {
+      Swal.fire({
+        toast: true,
+        position: 'bottom-end',
+        icon: 'info',
+        title: 'แสดงรายละเอียดด้านล่าง',
+        showConfirmButton: false,
+        timer: 2000,
+        background: '#0f172a',
+        color: '#ffffff',
+        iconColor: '#38bdf8'
+      });
+    }
   }
 
   // ----------------------------------------------------
@@ -2932,23 +2987,36 @@ const google = {
       const setRec = item.set || {};
       const sheetRec = item.sheet || {};
 
-      const rawStudentId = setRec.studentId || '-';
+      const rawStudentId = setRec.studentId || sheetRec.studentId || '-';
       const studentId = SETImporter.escapeHtml(rawStudentId);
 
-      const rawCid = setRec.citizenId || '-';
-      const citizenIdDisplay = SETImporter.escapeHtml(state.setImport.maskPii ? SETImporter.maskCitizenId(rawCid) : rawCid);
+      const rawCid = setRec.citizenId || sheetRec.citizenId || '';
+      const citizenIdDisplay = rawCid ? SETImporter.escapeHtml(state.setImport.maskPii ? SETImporter.maskCitizenId(rawCid) : rawCid) : '-';
 
       const rawName = setRec.fullName || sheetRec.name || '-';
-      const name = SETImporter.escapeHtml(rawName);
+      let name = SETImporter.escapeHtml(rawName);
+      if (item.category === 'sheets_only') {
+        name += ` <span class="inline-block ml-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">มีเฉพาะใน sheet</span>`;
+      }
 
       const dob = setRec.dob || sheetRec.dateOfBirth || '-';
-      const age = setRec.age || sheetRec.age || '-';
-      const dobAge = SETImporter.escapeHtml(dob !== '-' ? `${dob} (${age})` : '-');
+      let age = setRec.age || sheetRec.age || '';
+      if (!age || age === '-') {
+        if (dob !== '-') {
+          const calc = calculateAge(dob, sheetRec);
+          if (calc !== null) age = `${calc} ปี`;
+        }
+      }
+      let dobAge = '-';
+      if (dob !== '-') {
+        dobAge = age ? `${dob} (${age})` : dob;
+      }
+      const dobAgeDisplay = SETImporter.escapeHtml(dobAge);
 
       const rawDisability = setRec.disabilityTypeSet || sheetRec.disabilityByCard || sheetRec.disabilityByScreening || '-';
       const disability = SETImporter.escapeHtml(rawDisability);
 
-      const rawAddress = setRec.address || '-';
+      const rawAddress = setRec.address || sheetRec.address || '-';
       const address = SETImporter.escapeHtml(rawAddress);
 
       const safeCategory = SETImporter.escapeHtml(item.category);
@@ -2978,7 +3046,7 @@ const google = {
           <td class="px-3 py-3 font-mono font-medium text-emerald-950">${studentId}</td>
           <td class="px-3 py-3 font-mono text-gray-600">${citizenIdDisplay}</td>
           <td class="px-3 py-3 font-semibold text-emerald-950">${name}</td>
-          <td class="px-3 py-3 text-gray-600">${dobAge}</td>
+          <td class="px-3 py-3 text-gray-600">${dobAgeDisplay}</td>
           <td class="px-3 py-3 text-gray-700">${disability}</td>
           <td class="px-3 py-3 text-gray-600 max-w-xs truncate" title="${address}">${address}</td>
           <td class="px-3 py-3 text-center whitespace-nowrap">
@@ -3021,7 +3089,11 @@ const google = {
     const sheetRec = item.sheet || item.conflictCandidate || {};
 
     const studentName = setRec.fullName || sheetRec.name || 'ไม่ระบุชื่อ';
-    $('#diffModalStudentName').text(`รายละเอียดเปรียบเทียบ: ${studentName}`);
+    let modalTitleText = `รายละเอียดเปรียบเทียบ: ${studentName}`;
+    if (category === 'sheets_only') {
+      modalTitleText += ' (มีเฉพาะใน sheet)';
+    }
+    $('#diffModalStudentName').text(modalTitleText);
 
     // Status Banner in modal
     const banner = $('#diffModalStatusBanner');
@@ -3079,17 +3151,29 @@ const google = {
       banner.after(confidenceHtml);
     }
 
-    // Compare fields - cleanly separating independent disability sources
+    // Compute age from date of birth if not directly provided
+    let calcSetAge = setRec.age || '-';
+    if ((!calcSetAge || calcSetAge === '-') && setRec.dob) {
+      const c = calculateAge(setRec.dob);
+      if (c !== null) calcSetAge = `${c} ปี`;
+    }
+    let calcSheetAge = sheetRec.age || '-';
+    if ((!calcSheetAge || calcSheetAge === '-') && sheetRec.dateOfBirth) {
+      const c = calculateAge(sheetRec.dateOfBirth, sheetRec);
+      if (c !== null) calcSheetAge = `${c} ปี`;
+    }
+
+    // Compare fields - cleanly separating independent disability sources and using '-' for missing data
     const fields = [
       {
         name: 'รหัสนักเรียน',
         setVal: setRec.studentId || '-',
-        sheetVal: sheetRec.rowNumber ? `(แถวชีตที่ ${sheetRec.rowNumber})` : '-'
+        sheetVal: sheetRec.studentId || (sheetRec.rowNumber ? `(แถวชีตที่ ${sheetRec.rowNumber})` : '-')
       },
       {
         name: 'เลขประจำตัวประชาชน',
         setVal: setRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(setRec.citizenId) : setRec.citizenId) : '-',
-        sheetVal: sheetRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(sheetRec.citizenId) : sheetRec.citizenId) : '(ไม่มีในฐานข้อมูลชีตเดิม)'
+        sheetVal: sheetRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(sheetRec.citizenId) : sheetRec.citizenId) : '-'
       },
       {
         name: 'ชื่อ-นามสกุล',
@@ -3103,8 +3187,8 @@ const google = {
       },
       {
         name: 'อายุ',
-        setVal: setRec.age || '-',
-        sheetVal: sheetRec.age || '-'
+        setVal: calcSetAge,
+        sheetVal: calcSheetAge
       },
       {
         name: 'เพศ',
@@ -3114,30 +3198,30 @@ const google = {
       {
         name: 'ความพิการ (ระบบ SET)',
         setVal: setRec.disabilityTypeSet || '-',
-        sheetVal: sheetRec.disabilityTypeSet || '(ไม่มีในชีตเดิม)',
+        sheetVal: sheetRec.disabilityTypeSet || '-',
         isSeparateSource: !sheetRec.disabilityTypeSet
       },
       {
         name: 'ความพิการ (บัตรคนพิการ)',
-        setVal: '(SET ไม่ได้ระบุ)',
+        setVal: setRec.disabilityByCard || '-',
         sheetVal: sheetRec.disabilityByCard || '-',
         isSeparateSource: true
       },
       {
         name: 'ความพิการ (แบบคัดกรอง)',
-        setVal: '(SET ไม่ได้ระบุ)',
+        setVal: setRec.disabilityByScreening || '-',
         sheetVal: sheetRec.disabilityByScreening || '-',
         isSeparateSource: true
       },
       {
         name: 'ที่อยู่ตามทะเบียนบ้าน',
         setVal: setRec.address || '-',
-        sheetVal: sheetRec.address || '(ไม่มีในชีตเดิม)'
+        sheetVal: sheetRec.address || '-'
       },
       {
         name: 'ห้องเรียน/ครูผู้รับผิดชอบ',
-        setVal: '(SET ไม่ได้ระบุ)',
-        sheetVal: sheetRec.classroom ? `${sheetRec.classroom} / ${sheetRec.teacher}` : '-'
+        setVal: '-',
+        sheetVal: sheetRec.classroom ? `${sheetRec.classroom} / ${sheetRec.teacher || '-'}` : '-'
       }
     ];
 

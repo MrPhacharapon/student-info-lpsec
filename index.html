@@ -664,7 +664,10 @@
           <button type="button" id="adminTabBtnSetImport" class="admin-tab-btn w-full sm:flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2 text-gray-600 hover:bg-white/50 hover:text-emerald-800">
             <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
             <span>นำเข้าและตรวจสอบข้อมูล SET (Excel Preview)</span>
-            <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">Phase 1</span>
+          </button>
+          <button type="button" id="btnAdminLogout" class="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition shrink-0 shadow-sm" title="ออกจากเซสชันผู้ดูแลระบบ">
+            <i data-lucide="log-out" class="w-4 h-4"></i>
+            <span>ออกจากระบบ Admin</span>
           </button>
         </div>
 
@@ -680,10 +683,7 @@
                 <p class="text-xs text-gray-500">จัดการฐานข้อมูลและกำหนดค่าตั้งอ้างอิงสำหรับสถิติรายงาน</p>
               </div>
             </div>
-            <button type="button" id="btnAdminLogout" class="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold flex items-center gap-1.5 transition" title="ออกจากเซสชันผู้ดูแลระบบ">
-              <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
-              <span>ออกจากระบบ Admin</span>
-            </button>
+
           </div>
           
           <div class="grid grid-cols-1 gap-5">
@@ -814,11 +814,11 @@
                   <div class="flex items-center justify-between">
                     <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                       <i data-lucide="file-text" class="w-4 h-4 text-emerald-700"></i>
-                      1. รายงานข้อมูลนักเรียน <span class="text-red-500">*</span>
+                      รายงานข้อมูลนักเรียนแบบละเอียด1 <span class="text-red-500">*</span>
                     </span>
                     <span id="badgeSetGeneral" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium">ยังไม่เลือก</span>
                   </div>
-                  <p class="text-xs text-gray-500">ข้อมูลทั่วไป: รหัสนักเรียน, เลขบัตร ปชช., ชื่อ-สกุล, วันเกิด, เพศ, ความพิการ</p>
+                  <p class="text-xs text-gray-500">ไฟล์ รายชื่อนักเรียนตามเลขประจำตัวประชาชน, ชื่อ, วันเดือนปีเกิด, อายุ, เพศ, ประเภทความพิการ</p>
                 </div>
                 <div class="mt-4 flex flex-col gap-2">
                   <input type="file" id="setFileGeneral" accept=".xls,.xlsx" class="hidden">
@@ -836,11 +836,11 @@
                   <div class="flex items-center justify-between">
                     <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                       <i data-lucide="home" class="w-4 h-4 text-emerald-700"></i>
-                      2. รายงานข้อมูลที่อยู่ตามทะเบียนบ้าน
+                      รายงานข้อมูลนักเรียนแบบละเอียด2
                     </span>
                     <span id="badgeSetAddress" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium">ยังไม่เลือก</span>
                   </div>
-                  <p class="text-xs text-gray-500">ข้อมูลที่อยู่: เลขบัตร ปชช., ที่อยู่, ตำบล, อำเภอ, จังหวัด, รหัสไปรษณีย์</p>
+                  <p class="text-xs text-gray-500">ไฟล์ รายงานข้อมูลเลขประจำประชาชน,วันเดือนปีเกิด,ที่อยู่นักเรียนตามทะเบียนบ้าน</p>
                 </div>
                 <div class="mt-4 flex flex-col gap-2">
                   <input type="file" id="setFileAddress" accept=".xls,.xlsx" class="hidden">
@@ -858,11 +858,11 @@
                   <div class="flex items-center justify-between">
                     <span class="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                       <i data-lucide="link-2" class="w-4 h-4 text-gray-500"></i>
-                      3. รายงานเชื่อมโยงรหัส (ทางเลือก)
+                      รายงานข้อมูลนักเรียนแบบละเอียด3
                     </span>
                     <span id="badgeSetLink" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 font-medium">ทางเลือก</span>
                   </div>
-                  <p class="text-xs text-gray-500">ไฟล์เชื่อมรหัสนักเรียนกับเลขบัตรประชาชน (กรณีรายงานแยกไฟล์)</p>
+                  <p class="text-xs text-gray-500">ไฟล์ รายงานข้อมูลวันเดือนปีเกิด, น้ำหนัก-ส่วนสูง</p>
                 </div>
                 <div class="mt-4 flex flex-col gap-2">
                   <input type="file" id="setFileLink" accept=".xls,.xlsx" class="hidden">
@@ -881,10 +881,6 @@
                 <button type="button" id="btnRunSetPreview" class="glass-btn-primary text-sm flex items-center gap-2" disabled>
                   <i data-lucide="play-circle" class="w-4 h-4"></i>
                   <span>ประมวลผลและเปรียบเทียบข้อมูล (Run Preview)</span>
-                </button>
-                <button type="button" id="btnLoadMockSetData" class="glass-btn-secondary text-sm flex items-center gap-1.5 bg-white/70 hover:bg-white text-emerald-800 border-emerald-300">
-                  <i data-lucide="flask-conical" class="w-4 h-4 text-emerald-600"></i>
-                  <span>โหลดข้อมูลทดสอบจำลอง (Mock Data)</span>
                 </button>
                 <button type="button" id="btnClearSetData" class="text-xs text-gray-500 hover:text-red-600 px-3 py-2 transition flex items-center gap-1">
                   <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
@@ -1051,7 +1047,7 @@
             <div class="p-4 rounded-xl bg-amber-500/10 border border-amber-300/60 flex items-start gap-3 text-amber-900 text-xs">
               <i data-lucide="info" class="w-5 h-5 text-amber-700 shrink-0 mt-0.5"></i>
               <div class="flex flex-col gap-1">
-                <span class="font-bold">นโยบายความปลอดภัยและการคุ้มครองข้อมูลส่วนบุคคล (Phase 1 Preview Mode):</span>
+                <span class="font-bold">นโยบายความปลอดภัยและการคุ้มครองข้อมูลส่วนบุคคล (Preview Mode):</span>
                 <span>• เลขประจำตัวประชาชนและข้อมูลส่วนบุคคลทั้งหมดถูกประมวลผลภายในหน่วยความจำของเว็บเบราว์เซอร์เท่านั้น และจะถูก Masked สำหรับการแสดงผลปกติ</span>
                 <span>• การแสดงผลนี้เป็นการจำลองเปรียบเทียบ (Preview) เท่านั้น <strong>ยังไม่มีการบันทึก ดัดแปลง หรือเขียนทับข้อมูลจริงใน Google Sheets</strong></span>
                 <span>• นักเรียนที่มีเฉพาะใน Google Sheets แต่ไม่พบในทะเบียน SET เป็นรายการที่รอผู้ดูแลระบบตรวจสอบ โดยระบบ Preview ยังไม่มีการซ่อนหรือลบข้อมูลจากเว็บไซต์จริง</span>
@@ -1240,7 +1236,7 @@
   </div>
 
   <!-- ======================================================== -->
-  <!-- SET DIFF DETAIL MODAL (Phase 1 Preview) -->
+  <!-- SET DIFF DETAIL MODAL (Preview Mode) -->
   <!-- ======================================================== -->
   <div id="setDiffModal" class="fixed inset-0 bg-emerald-950/20 backdrop-blur-sm z-50 justify-center items-center p-4 hidden">
     <div class="glass-panel-mint w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
