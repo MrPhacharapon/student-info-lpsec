@@ -8,7 +8,8 @@
       errDiv.style.position = 'fixed'; errDiv.style.top = '0'; errDiv.style.left = '0';
       errDiv.style.width = '100%'; errDiv.style.background = '#dc2626'; errDiv.style.color = 'white';
       errDiv.style.padding = '20px'; errDiv.style.zIndex = '999999'; errDiv.style.wordBreak = 'break-all';
-      errDiv.innerHTML = '<b>🚨 [System Crash]</b><br/>' + msg + '<br/><small>Line: ' + line + ', Col: ' + col + '</small>';
+      var details = (error && (error.stack || error.message)) ? ('<br/><small style="font-family:monospace;white-space:pre-wrap;">' + (error.stack || error.message) + '</small>') : '';
+      errDiv.innerHTML = '<b>🚨 [System Crash]</b><br/>' + msg + '<br/><small>Line: ' + line + ', Col: ' + col + '</small>' + details;
       document.body.appendChild(errDiv);
     };
     window.onunhandledrejection = function(e) {
@@ -1350,6 +1351,12 @@
           </h3>
 
           <div class="flex flex-col gap-2.5 text-xs">
+            <!-- Disability by SET -->
+            <div class="bg-blue-50/70 border border-blue-100 p-2.5 rounded-xl">
+              <span class="text-[11px] text-blue-800 font-medium block">ประเภทความพิการ (ตามทะเบียน SET)</span>
+              <span id="profileDisSet" class="text-xs font-bold text-blue-950 mt-0.5 block">-</span>
+            </div>
+
             <!-- Disability by Card -->
             <div class="bg-emerald-50/70 border border-emerald-100 p-2.5 rounded-xl">
               <span class="text-[11px] text-emerald-700 font-medium block">ประเภทความพิการ (ตามบัตรคนพิการ)</span>

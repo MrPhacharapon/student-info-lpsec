@@ -1139,9 +1139,14 @@ const google = {
            ? getNormalizedDisability(student.disabilityByScreening, false) 
            : '-');
 
-      // 3. Age in years
-      const age = calculateAge(student.dateOfBirth, student);
-      const ageText = student.age || (age !== null ? `${age} ปี` : '-');
+      // Find matched record from Excel SET if available
+      const setRec = (typeof findMatchedSetRecord === 'function') ? findMatchedSetRecord(student) : null;
+      const displayName = (setRec && setRec.fullName) ? setRec.fullName : student.name;
+
+      // 3. Age (Prioritize Excel SET, fallback to Google Sheets)
+      const ageText = (setRec && setRec.age)
+        ? (setRec.age.includes('ปี') ? setRec.age : setRec.age + ' ปี')
+        : (student.age || (calculateAge(student.dateOfBirth, student) !== null ? calculateAge(student.dateOfBirth, student) + ' ปี' : '-'));
 
       // 4. Action button: ONLY "รายละเอียด" (NO edit, NO delete buttons)
       const actionButtons = `
@@ -1154,7 +1159,7 @@ const google = {
       const cardHtml = buildStudentAccordionCardHtml(student);
       const rowHtml = `
         <tr id="studentRow_${student.rowNumber}" onclick="toggleStudentAccordion(${student.rowNumber})" class="hover:bg-emerald-50/40 border-b border-emerald-100/40 transition cursor-pointer select-none">
-          <td class="px-2.5 py-2 text-xs font-medium text-emerald-950">${student.name}</td>
+          <td class="px-2.5 py-2 text-xs font-medium text-emerald-950">${displayName}</td>
           <td class="px-2.5 py-2 text-xs text-gray-700">${displayDis}</td>
           <td class="px-1.5 py-2 text-xs text-center font-medium text-gray-700">${ageText}</td>
           <td class="px-2.5 py-2 text-xs text-gray-700">${student.classroom || '-'}</td>
@@ -2788,6 +2793,9 @@ const google = {
         }
       });
 
+      // Automatically join reports to make address and other enriched fields immediately available
+      tryAutoJoinSetReports();
+
       if (hasGeneral && state.setImport.generalRows.length > 0) {
         $('#btnRunSetPreview').prop('disabled', false);
         $('#badgeLocalCacheStatus').removeClass('hidden');
@@ -2985,8 +2993,13 @@ const google = {
           valid: validation.valid,
           savedAt: new Date().toISOString()
         }).then(() => {
+          tryAutoJoinSetReports();
           $('#badgeLocalCacheStatus').removeClass('hidden');
           if (typeof lucide !== 'undefined') lucide.createIcons();
+          // Re-render table if on students view so addresses appear immediately
+          if (state.currentSection === 'students') {
+            renderStudentTable();
+          }
         });
 
       } catch (err) {
@@ -3579,26 +3592,202 @@ const google = {
     });
   }
 
+  // Auto-join SET Reports helper to make address data immediately available across the app
+  function tryAutoJoinSetReports() {
+    try {
+      if (!state.setImport || typeof SETImporter === 'undefined') return;
+      if (state.setImport.generalRows && state.setImport.generalRows.length > 0 &&
+          state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+        const normalizedGen = state.setImport.generalRows.map(r => SETImporter.normalizeSetGeneralRow(r, state.setImport.generalMapping));
+        const normalizedAddr = state.setImport.addressRows.map(r => SETImporter.normalizeSetAddressRow(r, state.setImport.addressMapping));
+        const normalizedLink = (state.setImport.linkRows || []).map(r => SETImporter.normalizeSetLinkRow(r, state.setImport.linkMapping));
+        const joinResult = SETImporter.joinSetReports(normalizedGen, normalizedAddr, normalizedLink);
+        state.setImport.joinedRecords = joinResult.joined;
+      }
+    } catch (err) {
+      console.warn('tryAutoJoinSetReports warning:', err);
+    }
+  }
+
+  /**
+   * Find matching record from attached SET Excel files
+   * Matches by Student ID, Citizen ID, or Normalized Name (+ DOB)
+   */
+  function findMatchedSetRecord(student) {
+    if (!student || !state.setImport || typeof SETImporter === 'undefined') return null;
+
+    // Ensure auto-join has run if records exist
+    if ((!state.setImport.joinedRecords || state.setImport.joinedRecords.length === 0) &&
+        state.setImport.generalRows && state.setImport.generalRows.length > 0 &&
+        state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+      tryAutoJoinSetReports();
+    }
+
+    const records = state.setImport.joinedRecords || [];
+    if (records.length === 0) return null;
+
+    const sid = student.studentId ? SETImporter.cleanStudentId(student.studentId) : '';
+    const cid = student.citizenId ? SETImporter.cleanCitizenId(student.citizenId) : '';
+    const normName = student.name ? SETImporter.normalizeThaiName(student.name) : '';
+    let dob = '';
+    if (student.dateOfBirth && typeof SETImporter.parseDateBE === 'function') {
+      const parsed = SETImporter.parseDateBE(student.dateOfBirth);
+      dob = parsed ? parsed.formatted : '';
+    }
+
+    // 1. Match by Student ID
+    if (sid) {
+      const found = records.find(r => SETImporter.cleanStudentId(r.studentId) === sid);
+      if (found) return found;
+    }
+
+    // 2. Match by Citizen ID
+    if (cid) {
+      const found = records.find(r => SETImporter.cleanCitizenId(r.citizenId) === cid);
+      if (found) return found;
+    }
+
+    // 3. Match by Normalized Name + DOB
+    if (normName && dob) {
+      const found = records.find(r => r.normalizedName === normName && r.dob === dob);
+      if (found) return found;
+    }
+
+    // 4. Match by Normalized Name alone (if unique in records)
+    if (normName) {
+      const matches = records.filter(r => r.normalizedName === normName);
+      if (matches.length === 1) return matches[0];
+    }
+
+    return null;
+  }
+
+  /**
+   * Smart Address Resolver:
+   * Resolves address from Google Sheets student record,
+   * falling back to attached SET Excel files (File 2 / Address report)
+   * matched by Student ID, Citizen ID, or Normalized Name + DOB.
+   */
+  function resolveStudentAddress(student) {
+    try {
+      if (!student) return { address: '-', fromExcel: false };
+
+      // 1. If Google Sheets already has an address, use it
+      if (student.address && student.address.trim() !== '' && student.address.trim() !== '-') {
+        return { address: student.address.trim(), fromExcel: false };
+      }
+
+      // 2. Check if SET Import has data
+      if (!state.setImport || typeof SETImporter === 'undefined') return { address: '-', fromExcel: false };
+
+      // If joinedRecords not ready yet, try auto-joining now
+      if ((!state.setImport.joinedRecords || state.setImport.joinedRecords.length === 0) &&
+          state.setImport.generalRows && state.setImport.generalRows.length > 0 &&
+          state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+        tryAutoJoinSetReports();
+      }
+
+      const sid = student.studentId ? SETImporter.cleanStudentId(student.studentId) : '';
+      const cid = student.citizenId ? SETImporter.cleanCitizenId(student.citizenId) : '';
+      const normName = student.name ? SETImporter.normalizeThaiName(student.name) : '';
+      let dob = '';
+      if (student.dateOfBirth && typeof SETImporter.parseDateBE === 'function') {
+        const parsed = SETImporter.parseDateBE(student.dateOfBirth);
+        dob = parsed ? parsed.formatted : '';
+      }
+
+      // 2.1 Check joinedRecords if available
+      if (state.setImport.joinedRecords && state.setImport.joinedRecords.length > 0) {
+        // By studentId
+        if (sid) {
+          const found = state.setImport.joinedRecords.find(r => SETImporter.cleanStudentId(r.studentId) === sid && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+        // By citizenId
+        if (cid) {
+          const found = state.setImport.joinedRecords.find(r => SETImporter.cleanCitizenId(r.citizenId) === cid && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+        // By normName + dob
+        if (normName && dob) {
+          const found = state.setImport.joinedRecords.find(r => r.normalizedName === normName && r.dob === dob && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+        // By normName alone
+        if (normName) {
+          const found = state.setImport.joinedRecords.find(r => r.normalizedName === normName && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+      }
+
+      // 2.2 Direct match on raw addressRows
+      if (state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+        for (const rawAddr of state.setImport.addressRows) {
+          const addr = (typeof SETImporter.normalizeSetAddressRow === 'function')
+            ? SETImporter.normalizeSetAddressRow(rawAddr, state.setImport.addressMapping)
+            : null;
+          if (addr && addr.fullAddress) {
+            if (sid && SETImporter.cleanStudentId(addr.studentId) === sid) {
+              return { address: addr.fullAddress, fromExcel: true };
+            }
+            if (cid && SETImporter.cleanCitizenId(addr.citizenId) === cid) {
+              return { address: addr.fullAddress, fromExcel: true };
+            }
+            // If raw address row has student name
+            if (normName && rawAddr) {
+              const rawName = rawAddr['ชื่อ-สกุล'] || rawAddr['ชื่อ-นามสกุล'] || rawAddr['ชื่อ'] || '';
+              if (rawName && SETImporter.normalizeThaiName(rawName) === normName) {
+                return { address: addr.fullAddress, fromExcel: true };
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('resolveStudentAddress error:', err);
+    }
+
+    return { address: '-', fromExcel: false };
+  }
+
   // ========================================================
   // STUDENT EXPANDABLE ACCORDION ROW (ZERO-PII COMPLIANT)
   // ========================================================
   function buildStudentAccordionCardHtml(student) {
     if (!student) return '';
 
-    // Student ID or Row fallback
-    const studentId = student.studentId || (student.rowNumber ? `(แถวที่ ${student.rowNumber})` : '-');
+    // Find matched record from Excel SET if available
+    const setRec = (typeof findMatchedSetRecord === 'function') ? findMatchedSetRecord(student) : null;
 
-    // Gender detection from name prefix
-    let gender = 'ไม่ระบุเพศ';
-    if (student.name) {
-      if (student.name.startsWith('เด็กชาย') || student.name.startsWith('นาย') || student.name.startsWith('ด.ช.')) gender = 'เพศชาย';
-      else if (student.name.startsWith('เด็กหญิง') || student.name.startsWith('นางสาว') || student.name.startsWith('ด.ญ.')) gender = 'เพศหญิง';
+    // 1. Student ID: Prioritize Excel SET, fallback to Google Sheets
+    const rawStudentId = (setRec && setRec.studentId) ? setRec.studentId : student.studentId;
+    const studentId = rawStudentId || (student.rowNumber ? '(แถวที่ ' + student.rowNumber + ')' : '-');
+
+    // 2. Student Name: Prioritize Excel SET, fallback to Google Sheets
+    const displayName = (setRec && setRec.fullName) ? setRec.fullName : (student.name || '-');
+
+    // 3. Age: Prioritize Excel SET, fallback to Google Sheets
+    let ageStr = '-';
+    if (setRec && setRec.age) {
+      ageStr = setRec.age.includes('ปี') ? setRec.age : setRec.age + ' ปี';
+    } else {
+      const age = calculateAge(student.dateOfBirth, student);
+      ageStr = student.age || (age !== null ? age + ' ปี' : 'ไม่ระบุอายุ');
     }
 
-    // Age calculation
-    const age = calculateAge(student.dateOfBirth, student);
-    const ageStr = student.age || (age !== null ? `${age} ปี` : 'ไม่ระบุอายุ');
-    const dobText = toThaiBuddhistDateString(student.dateOfBirth);
+    // 4. Date of Birth: Prioritize Excel SET, fallback to Google Sheets
+    let dobText = '-';
+    if (setRec && setRec.dob) {
+      dobText = toThaiBuddhistDateString(setRec.dob);
+    } else if (student.dateOfBirth) {
+      dobText = toThaiBuddhistDateString(student.dateOfBirth);
+    }
+
+    // 5. Address from Excel SET
+    const studentAddress = resolveStudentAddress(student);
+
+    // 6. Disability from SET
+    const disSetText = (setRec && setRec.disabilityTypeSet) ? setRec.disabilityTypeSet : '-';
 
     // Service badge
     let svcText = 'รับบริการในศูนย์ / อื่นๆ';
@@ -3660,7 +3849,7 @@ const google = {
               </div>
               <div class="space-y-1 text-xs text-slate-700 leading-relaxed">
                 <div><span class="text-slate-500">รหัสนักเรียน:</span> <strong class="text-emerald-900 font-mono">${studentId}</strong></div>
-                <div><span class="text-slate-500">ชื่อ-สกุล:</span> <strong class="text-slate-900">${student.name || '-'}</strong></div>
+                <div><span class="text-slate-500">ชื่อ-สกุล:</span> <strong class="text-slate-900">${displayName}</strong></div>
                 <div><span class="text-slate-500">อายุ:</span> <span class="font-medium text-slate-800">${ageStr}</span></div>
                 <div><span class="text-slate-500">วันเดือนปีเกิด:</span> <span class="text-slate-800">${dobText}</span></div>
                 <div><span class="text-slate-500">ห้องเรียน/หน่วยบริการ:</span> <span class="font-semibold text-emerald-850">${student.classroom || '-'}</span></div>
@@ -3678,6 +3867,10 @@ const google = {
                 <span class="font-bold text-xs text-emerald-950">ความพิการ & เอกสารหลักฐาน</span>
               </div>
               <div class="space-y-2 text-xs text-slate-700">
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามทะเบียน SET):</div>
+                  <div class="font-semibold text-blue-900 bg-blue-50/70 px-2 py-1 rounded border border-blue-100/60">${disSetText}</div>
+                </div>
                 <div>
                   <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามบัตรคนพิการ):</div>
                   <div class="font-semibold text-emerald-900 bg-emerald-50/70 px-2 py-1 rounded border border-emerald-100/60">${disCardText}</div>
@@ -3706,7 +3899,7 @@ const google = {
               <div class="space-y-2 text-xs text-slate-700">
                 <div>
                   <div class="text-[11px] text-slate-500 mb-0.5">ที่อยู่ตามทะเบียนบ้าน:</div>
-                  <div class="text-slate-800 bg-slate-50 p-2 rounded border border-slate-100 text-xs leading-relaxed max-h-24 overflow-y-auto">${student.address || '-'}</div>
+                  <div class="text-slate-800 bg-slate-50 p-2 rounded border border-slate-100 text-xs leading-relaxed max-h-24 overflow-y-auto">${studentAddress.address || '-'}</div>
                 </div>
                 ${hasSpecialStatus ? `
                 <div>
@@ -3816,33 +4009,51 @@ const google = {
     let cleanName = (s.name || '').replace(/^(เด็กชาย|เด็กหญิง|นาย|นางสาว|ด\.ช\.|ด\.ญ\.)/, '').trim();
     let initialLetter = cleanName.charAt(0) || (s.name ? s.name.charAt(0) : 'น');
 
+    // Find matched record from Excel SET if available
+    const setRec = (typeof findMatchedSetRecord === 'function') ? findMatchedSetRecord(s) : null;
+    const displayName = (setRec && setRec.fullName) ? setRec.fullName : (s.name || '-');
+    const rawStudentId = (setRec && setRec.studentId) ? setRec.studentId : s.studentId;
+    const sid = rawStudentId || (s.rowNumber ? '(แถวที่ ' + s.rowNumber + ')' : '-');
+
+    let ageStr = '-';
+    if (setRec && setRec.age) {
+      ageStr = setRec.age.includes('ปี') ? setRec.age : setRec.age + ' ปี';
+    } else {
+      const age = calculateAge(s.dateOfBirth, s);
+      ageStr = s.age || (age !== null ? age + ' ปี' : 'ไม่ระบุอายุ');
+    }
+
+    let dobText = '-';
+    if (setRec && setRec.dob) {
+      dobText = toThaiBuddhistDateString(setRec.dob);
+    } else if (s.dateOfBirth) {
+      dobText = toThaiBuddhistDateString(s.dateOfBirth);
+    }
+
     $('#profileAvatar').text(initialLetter);
-    $('#profileStudentName').text(s.name || '-');
-    
-    const sid = s.studentId || (s.rowNumber ? `(แถวที่ ${s.rowNumber})` : '-');
-    $('#profileStudentIdBadge').text(`รหัส ${sid}`);
+    $('#profileStudentName').text(displayName);
+    $('#profileStudentIdBadge').text('รหัส ' + sid);
 
     // Gender detection from name prefix
     let gender = 'ไม่ระบุ';
-    if (s.name) {
-      if (s.name.startsWith('เด็กชาย') || s.name.startsWith('นาย') || s.name.startsWith('ด.ช.')) gender = 'เพศชาย';
-      else if (s.name.startsWith('เด็กหญิง') || s.name.startsWith('นางสาว') || s.name.startsWith('ด.ญ.')) gender = 'เพศหญิง';
+    if (displayName) {
+      if (displayName.startsWith('เด็กชาย') || displayName.startsWith('นาย') || displayName.startsWith('ด.ช.')) gender = 'เพศชาย';
+      else if (displayName.startsWith('เด็กหญิง') || displayName.startsWith('นางสาว') || displayName.startsWith('ด.ญ.')) gender = 'เพศหญิง';
     }
     
-    const age = calculateAge(s.dateOfBirth, s);
-    const ageStr = s.age || (age !== null ? `${age} ปี` : 'ไม่ระบุอายุ');
-    $('#profileGenderAge').text(`${gender} • อายุ ${ageStr}`);
+    $('#profileGenderAge').text(gender + ' • อายุ ' + ageStr);
 
     // Age range
+    const parsedAgeNum = parseInt(ageStr, 10);
     let ageRange = 'ไม่ระบุช่วง';
-    if (age !== null) {
-      if (age < 3) ageRange = 'ช่วงอายุน้อยกว่า 3 ปี';
-      else if (age <= 6) ageRange = 'ช่วงอายุ 3 - 6 ปี';
+    if (!isNaN(parsedAgeNum)) {
+      if (parsedAgeNum < 3) ageRange = 'ช่วงอายุน้อยกว่า 3 ปี';
+      else if (parsedAgeNum <= 6) ageRange = 'ช่วงอายุ 3 - 6 ปี';
       else ageRange = 'ช่วงอายุ 7 ปีขึ้นไป';
     }
     $('#profileAgeRange').text(ageRange);
 
-    // Service badge
+    // Service badge (Google Sheets ของศูนย์ฯ)
     let svcText = 'รับบริการในศูนย์ / อื่นๆ';
     let svcClass = 'bg-emerald-400 text-emerald-950';
     if (s.serviceUnit === 1) {
@@ -3857,15 +4068,19 @@ const google = {
     }
     const badge = $('#profileServiceBadge');
     badge.text(svcText);
-    badge.attr('class', `px-3 py-1 rounded-full text-xs font-bold shadow-sm shrink-0 ${svcClass}`);
+    badge.attr('class', 'px-3 py-1 rounded-full text-xs font-bold shadow-sm shrink-0 ' + svcClass);
 
-    // Education & Classroom
+    // Education & Classroom (Google Sheets ของศูนย์ฯ)
     $('#profileClassroom').text(s.classroom || '-');
     $('#profileTeacher').text(s.teacher || '-');
-    $('#profileDob').text(toThaiBuddhistDateString(s.dateOfBirth));
-    $('#profileAddress').text(s.address || '-');
+    $('#profileDob').text(dobText);
+    const sAddress = resolveStudentAddress(s);
+    $('#profileAddress').text(sAddress.address || '-');
 
-    // Disabilities (Card vs Screening)
+    // Disabilities: SET vs Card vs Screening
+    const disSetText = (setRec && setRec.disabilityTypeSet) ? setRec.disabilityTypeSet : '-';
+    $('#profileDisSet').text(disSetText);
+
     const disCard = getNormalizedDisability(s.disabilityByCard, true);
     $('#profileDisCard').text(disCard !== 'ยังไม่มีบัตรคนพิการ' ? disCard : 'ยังไม่มีบัตรคนพิการ');
     
