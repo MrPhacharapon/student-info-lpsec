@@ -477,7 +477,7 @@ function validateWriteAuth(request, props) {
 }
 
 /**
- * Handles administrator password verification (PBKDF2 salted hash comparison)
+ * Handles administrator password verification (PBKDF2 salted hash comparison or direct comparison)
  */
 function handleAdminLogin(payload, props) {
   if (!props) {
@@ -489,27 +489,37 @@ function handleAdminLogin(payload, props) {
     return { valid: false, code: 'INVALID_CREDENTIALS', message: 'กรุณากรอกรหัสผ่านผู้ดูแลระบบ' };
   }
 
-  const storedHash = props ? props.getProperty('ADMIN_PASSWORD_PBKDF2') : null;
-  if (!storedHash) {
-    const err = new Error("ระบบยังไม่ได้ตั้งค่ารหัสผ่านผู้ดูแลระบบ (ADMIN_PASSWORD_PBKDF2) ใน Script Properties");
+  // Supports both direct password entry (ADMIN_PASSWORD) and PBKDF2 hash (ADMIN_PASSWORD_PBKDF2)
+  const storedConfig = props ? (props.getProperty('ADMIN_PASSWORD') || props.getProperty('ADMIN_PASSWORD_PBKDF2')) : null;
+  if (!storedConfig || storedConfig.trim() === '') {
+    const err = new Error("ระบบยังไม่ได้ตั้งค่ารหัสผ่านผู้ดูแลระบบ (ADMIN_PASSWORD หรือ ADMIN_PASSWORD_PBKDF2) ใน Script Properties");
     err.code = 'AUTH_NOT_CONFIGURED';
     throw err;
   }
 
-  const parts = storedHash.split('$');
-  if (parts.length !== 4 || parts[0] !== 'pbkdf2_sha256') {
-    const err = new Error("รูปแบบรหัสผ่านที่จัดเก็บบนเซิร์ฟเวอร์ไม่ถูกต้อง");
-    err.code = 'AUTH_CONFIG_ERROR';
-    throw err;
+  const rawConfig = storedConfig.trim();
+  let isValid = false;
+
+  if (rawConfig.startsWith('pbkdf2_sha256$')) {
+    const parts = rawConfig.split('$');
+    if (parts.length !== 4) {
+      const err = new Error("รูปแบบรหัสผ่านที่จัดเก็บบนเซิร์ฟเวอร์ไม่ถูกต้อง");
+      err.code = 'AUTH_CONFIG_ERROR';
+      throw err;
+    }
+
+    const iterations = parseInt(parts[1], 10);
+    const saltHex = parts[2];
+    const expectedHashHex = parts[3];
+
+    const computedHashHex = computePbkdf2HmacSha256Hex(password, saltHex, iterations);
+    isValid = constantTimeEquals(computedHashHex, expectedHashHex);
+  } else {
+    // Direct plaintext password comparison with constant-time equality check
+    isValid = constantTimeEquals(password, rawConfig);
   }
 
-  const iterations = parseInt(parts[1], 10);
-  const saltHex = parts[2];
-  const expectedHashHex = parts[3];
-
-  const computedHashHex = computePbkdf2HmacSha256Hex(password, saltHex, iterations);
-
-  if (!constantTimeEquals(computedHashHex, expectedHashHex)) {
+  if (!isValid) {
     return { valid: false, code: 'INVALID_CREDENTIALS', message: 'รหัสผ่านผู้ดูแลระบบไม่ถูกต้อง' };
   }
 

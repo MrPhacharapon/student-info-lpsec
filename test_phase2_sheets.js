@@ -971,6 +971,27 @@ try {
   assert.strictEqual(postLoginFail.status, 'error');
   assert.strictEqual(postLoginFail.code, 'INVALID_CREDENTIALS');
 
+  // Direct Plaintext Password Verification in Script Properties (User Directive: Option A Direct Setting)
+  // Test 1: ADMIN_PASSWORD = '123'
+  delete dynamicScriptProps.ADMIN_PASSWORD_PBKDF2;
+  dynamicScriptProps.ADMIN_PASSWORD = '123';
+  const directLoginOk = code.handleAdminLogin({ password: '123' });
+  assert.strictEqual(directLoginOk.valid, true, 'Direct ADMIN_PASSWORD must pass handleAdminLogin');
+  assert.ok(directLoginOk.token, 'Direct ADMIN_PASSWORD must issue valid session token');
+
+  const directLoginWrong = code.handleAdminLogin({ password: 'wrong' });
+  assert.strictEqual(directLoginWrong.valid, false);
+  assert.strictEqual(directLoginWrong.code, 'INVALID_CREDENTIALS');
+
+  // Test 2: ADMIN_PASSWORD_PBKDF2 = '123' (User setting plaintext in PBKDF2 property)
+  delete dynamicScriptProps.ADMIN_PASSWORD;
+  dynamicScriptProps.ADMIN_PASSWORD_PBKDF2 = '123';
+  const directLoginPbkdf2Ok = code.handleAdminLogin({ password: '123' });
+  assert.strictEqual(directLoginPbkdf2Ok.valid, true, 'Direct password in ADMIN_PASSWORD_PBKDF2 must pass handleAdminLogin');
+
+  // Restore PBKDF2 hash for remaining token and session tests
+  code.setupAdminPassword(testPassword, 600000);
+
   // -----------------------------------------------------------------------
   // 13.4 Token validation (tampered, expired, revoked) & Logout Authorization
   // -----------------------------------------------------------------------
