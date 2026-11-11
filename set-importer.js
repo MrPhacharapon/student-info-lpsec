@@ -1270,7 +1270,7 @@
         sheetsOnly.push({
           sheet: student,
           status: 'sheets_only',
-          description: 'มีเฉพาะใน Google Sheets แต่ไม่พบในทะเบียน SET (ต้องตรวจสอบและไม่แสดงต่อ Public)'
+          description: 'มีเฉพาะใน Google Sheets แต่ไม่พบในทะเบียน SET (ไม่พบในไฟล์ SET ที่นำเข้า)'
         });
       }
     });

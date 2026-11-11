@@ -586,48 +586,7 @@ const google = {
       });
     });
 
-    // Admin Fetch Tabs Helper (Supports both automatic background fetch and manual button click)
-    function fetchAdminSheetTabs(isAuto = false) {
-      const url = $('#adminSpreadsheetUrl').val();
-      if (!url) {
-        if (!isAuto) Swal.fire('คำเตือน', 'กรุณากรอกลิงก์ Google Sheet', 'warning');
-        return;
-      }
-      
-      const currentSelectedSheet = (state.appConfig && state.appConfig.sheetName) || $('#adminSheetTabSelect').val();
-      
-      if (!isAuto) showLoading(true);
-      google.script.run
-        .withSuccessHandler(function(res) {
-          if (!isAuto) showLoading(false);
-          const isSuccess = res && (res.success || res.status === 'success');
-          const tabs = res && (res.tabs || (res.data && res.data.tabs));
-          if (isSuccess && tabs && tabs.length > 0) {
-            const select = $('#adminSheetTabSelect').empty();
-            tabs.forEach(tab => {
-              const isSelected = (tab.name === currentSelectedSheet) ? 'selected' : '';
-              select.append(`<option value="${tab.name}" ${isSelected}>${tab.name} (${tab.id})</option>`);
-            });
-            if (currentSelectedSheet) {
-              select.val(currentSelectedSheet);
-            }
-            if (!isAuto) {
-              Swal.fire('สำเร็จ', 'ดึงข้อมูลแผ่นงานเรียบร้อยแล้ว กรุณาเลือกแผ่นงานที่ต้องการด้านล่าง', 'success');
-            }
-          } else {
-            if (!isAuto) {
-              Swal.fire('ข้อผิดพลาด', 'ไม่สามารถเชื่อมต่อชีตได้: ' + ((res && res.message) || 'ไม่พบรายชื่อแผ่นงาน'), 'error');
-            }
-          }
-        })
-        .withFailureHandler(function(err) {
-          if (!isAuto) {
-            showLoading(false);
-            Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
-          }
-        })
-        .getSheetTabsFromUrl(url);
-    }
+    // Admin Fetch Tabs Helper moved to outer scope
 
     // Admin Fetch Tabs Button
     $('#btnAdminFetchTabs').click(function() {
@@ -758,19 +717,66 @@ const google = {
     const titleEl = $('#topBarTitle');
     if (targetSection === 'dashboard') {
       titleEl.text('สารสนเทศนักเรียน ศูนย์การศึกษาพิเศษ ประจำจังหวัดลำปาง');
-      // Hide filter panel when in dashboard (overview) mode
-      $('#filterPanel').addClass('hidden');
-      $('#iconAdvancedSearch').removeClass('rotate-180');
+      // ภาพ 2: หน้าภาพรวม -> ไม่ต้องแสดง ตัวกรองหลายชั้น
+      $('#btnToggleAdvancedSearch, #filterPanel').addClass('hidden');
       renderDashboard();
     } else if (targetSection === 'students') {
-      titleEl.text('แฟ้มรายชื่อนักเรียน');
+      // ภาพ 3: แฟ้มรายชื่อนักเรียน -> ข้อมูลนักเรียนรายบุคคล
+      titleEl.text('ข้อมูลนักเรียนรายบุคคล');
+      // แสดงตัวกรองหลายชั้นในหน้าข้อมูลนักเรียนรายบุคคล
+      $('#btnToggleAdvancedSearch, #filterPanel').removeClass('hidden');
       renderStudentTable();
     } else if (targetSection === 'pivot') {
       titleEl.text('ตารางวิเคราะห์ความสัมพันธ์ของข้อมูล');
+      $('#btnToggleAdvancedSearch, #filterPanel').addClass('hidden');
       renderPivotTable();
     } else if (targetSection === 'admin') {
       titleEl.text('ตั้งค่าระบบสำหรับผู้ดูแล (Admin)');
+      $('#btnToggleAdvancedSearch, #filterPanel').addClass('hidden');
     }
+  }
+
+  // Admin Fetch Tabs Helper (Supports both automatic background fetch and manual button click)
+  function fetchAdminSheetTabs(isAuto = false) {
+    const url = $('#adminSpreadsheetUrl').val();
+    if (!url) {
+      if (!isAuto) Swal.fire('คำเตือน', 'กรุณากรอกลิงก์ Google Sheet', 'warning');
+      return;
+    }
+    
+    const currentSelectedSheet = (state.appConfig && state.appConfig.sheetName) || $('#adminSheetTabSelect').val();
+    
+    if (!isAuto) showLoading(true);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!isAuto) showLoading(false);
+        const isSuccess = res && (res.success || res.status === 'success');
+        const tabs = res && (res.tabs || (res.data && res.data.tabs));
+        if (isSuccess && tabs && tabs.length > 0) {
+          const select = $('#adminSheetTabSelect').empty();
+          tabs.forEach(tab => {
+            const isSelected = (tab.name === currentSelectedSheet) ? 'selected' : '';
+            select.append(`<option value="${tab.name}" ${isSelected}>${tab.name} (${tab.id})</option>`);
+          });
+          if (currentSelectedSheet) {
+            select.val(currentSelectedSheet);
+          }
+          if (!isAuto) {
+            Swal.fire('สำเร็จ', 'ดึงข้อมูลแผ่นงานเรียบร้อยแล้ว กรุณาเลือกแผ่นงานที่ต้องการด้านล่าง', 'success');
+          }
+        } else {
+          if (!isAuto) {
+            Swal.fire('ข้อผิดพลาด', 'ไม่สามารถเชื่อมต่อชีตได้: ' + ((res && res.message) || 'ไม่พบรายชื่อแผ่นงาน'), 'error');
+          }
+        }
+      })
+      .withFailureHandler(function(err) {
+        if (!isAuto) {
+          showLoading(false);
+          Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
+        }
+      })
+      .getSheetTabsFromUrl(url);
   }
 
   // Admin settings panel initialization
@@ -998,13 +1004,15 @@ const google = {
 
   function renderTableHeader() {
     const thead = $('#studentsSection table thead tr').empty();
-    state.columnOrder.forEach(colId => {
-      const def = COLUMN_DEFINITIONS[colId];
-      if (def) {
-        thead.append(`<th class="px-6 py-4 text-emerald-800 text-sm ${def.class}">${def.label}</th>`);
-      }
-    });
-    thead.append(`<th class="px-6 py-4 text-emerald-900 text-sm text-right whitespace-nowrap">จัดการ</th>`);
+    thead.append(`
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ชื่อ-สกุล</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ประเภทความพิการ</th>
+      <th class="px-1.5 py-2 text-emerald-850 font-semibold text-xs text-center">อายุ (ปี)</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ห้องเรียน/หน่วยบริการ</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ประเภทการบริการ</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ครูผู้รับผิดชอบ</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs text-center whitespace-nowrap">ดูรายละเอียด</th>
+    `);
   }
 
   function getColumnCellHtml(colId, student, svcText, docBadges, dobText, statusLabels, displayDis) {
@@ -1028,98 +1036,135 @@ const google = {
     }
   }
 
-  // Render Table of students
+  // Render Table of students (Matching Image 3 columns, compact text-xs, conflict warning, no edit/delete buttons)
   function renderStudentTable() {
     renderTableHeader();
     const tbody = $('#studentTableBody').empty();
     
     if (state.filteredStudents.length === 0) {
-      tbody.append(`
-        <tr>
-          <td colspan="${state.columnOrder.length + 1}" class="px-6 py-10 text-center text-gray-500 font-medium bg-white/30">
-            <div class="flex flex-col items-center justify-center gap-2">
-              <i data-lucide="users" class="w-10 h-10 text-gray-400"></i>
-              <span>ไม่พบข้อมูลนักเรียนที่ตรงตามเงื่อนไข</span>
-            </div>
-          </td>
-        </tr>
-      `);
+      const searchVal = ($('#searchName').val() || '').trim();
+      const classroomVal = $('#filterClassroom').val();
+      const teacherVal = $('#filterTeacher').val();
+      const disCardVal = $('#filterDisabilityCard').val();
+      const disScrVal = $('#filterDisabilityScreen').val();
+      
+      let conflictHtml = '';
+      if (searchVal) {
+        // Search if the student exists in allStudents without other conflicting filters
+        const matchingKids = state.allStudents.filter(s => {
+          const terms = searchVal.toLowerCase().split(/\s+/).filter(Boolean);
+          const nameLower = (s.name || '').toLowerCase();
+          return terms.every(t => nameLower.includes(t));
+        });
+
+        if (matchingKids.length > 0) {
+          const kid = matchingKids[0];
+          let conflictReasons = [];
+          if (classroomVal && kid.classroom !== classroomVal) {
+            conflictReasons.push(`ห้องเรียนจริงคือ <strong>"${kid.classroom || '-'}"</strong> (แต่เลือกตัวกรองเป็น "${classroomVal}")`);
+          }
+          if (teacherVal && kid.teacher !== teacherVal) {
+            conflictReasons.push(`ครูผู้รับผิดชอบจริงคือ <strong>"${kid.teacher || '-'}"</strong> (แต่เลือกตัวกรองเป็น "${teacherVal}")`);
+          }
+          if (disCardVal && getNormalizedDisability(kid.disabilityByCard, true) !== disCardVal) {
+            conflictReasons.push(`ความพิการตามบัตรจริงคือ <strong>"${getNormalizedDisability(kid.disabilityByCard, true)}"</strong>`);
+          }
+          if (disScrVal && getNormalizedDisability(kid.disabilityByScreening, false) !== disScrVal) {
+            conflictReasons.push(`ความพิการตามคัดกรองจริงคือ <strong>"${getNormalizedDisability(kid.disabilityByScreening, false)}"</strong>`);
+          }
+
+          const reasonText = conflictReasons.length > 0 
+            ? `<div class="mt-1 text-xs text-amber-800 leading-relaxed">${conflictReasons.join(' • ')}</div>` 
+            : `<div class="mt-1 text-xs text-amber-800 leading-relaxed">พบ ${kid.name} อยู่ในห้องเรียน <strong>"${kid.classroom || '-'}"</strong> (ครู: ${kid.teacher || '-'})</div>`;
+
+          conflictHtml = `
+            <tr>
+              <td colspan="7" class="p-4 sm:p-6 text-center bg-amber-50/80 border border-amber-200/80 rounded-2xl">
+                <div class="flex flex-col items-center justify-center gap-2 text-amber-900 max-w-xl mx-auto">
+                  <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 shadow-xs">
+                    <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                  </div>
+                  <div class="font-bold text-sm text-amber-950">
+                    พบข้อมูลนักเรียนในระบบ แต่เงื่อนไขตัวกรองไม่สัมพันธ์กัน
+                  </div>
+                  <div class="text-xs text-slate-700">
+                    พบชื่อ <strong>"${kid.name}"</strong> ในฐานข้อมูล
+                  </div>
+                  ${reasonText}
+                  <button type="button" onclick="clearFiltersExceptSearch()" class="mt-2 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs transition flex items-center gap-1.5">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    <span>คลิกเพื่อล้างตัวกรองอื่น และแสดงข้อมูลนักเรียนทันที</span>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }
+      }
+
+      if (!conflictHtml) {
+        conflictHtml = `
+          <tr>
+            <td colspan="7" class="px-4 py-8 text-center text-gray-500 font-medium bg-white/30">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <i data-lucide="users" class="w-8 h-8 text-gray-400"></i>
+                <span>ไม่พบข้อมูลนักเรียนที่ตรงตามเงื่อนไข</span>
+                <span class="text-xs text-gray-400">ลองตรวจสอบตัวสะกดชื่อ หรือกดปุ่ม "ล้างตัวกรอง" ที่เมนูด้านซ้าย</span>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+
+      tbody.append(conflictHtml);
       lucide.createIcons();
       return;
     }
 
-    state.filteredStudents.forEach((student, index) => {
-      // Determine service text
+    state.filteredStudents.forEach((student) => {
+      // 1. Service badges
       let svcText = '';
-      if (student.serviceInCenter) svcText += '<span class="px-2 py-1 text-xs bg-emerald-100 text-emerald-800 rounded-full font-medium mr-1">รับบริการที่ศูนย์</span>';
-      if (student.serviceUnit) svcText += '<span class="px-2 py-1 text-xs bg-cyan-100 text-cyan-800 rounded-full font-medium mr-1">รับบริการที่หน่วยบริการ</span>';
-      if (student.serviceAdjustHome) svcText += '<span class="px-2 py-1 text-xs bg-teal-100 text-teal-800 rounded-full font-medium">รับบริการที่บ้าน</span>';
+      if (student.serviceInCenter) svcText += '<span class="px-2 py-0.5 text-[10px] bg-emerald-100 text-emerald-800 rounded-full mr-1 whitespace-nowrap">รับบริการที่ศูนย์</span>';
+      if (student.serviceUnit) svcText += '<span class="px-2 py-0.5 text-[10px] bg-cyan-100 text-cyan-800 rounded-full mr-1 whitespace-nowrap">รับบริการที่หน่วยบริการ</span>';
+      if (student.serviceAdjustHome) svcText += '<span class="px-2 py-0.5 text-[10px] bg-teal-100 text-teal-800 rounded-full whitespace-nowrap">รับบริการที่บ้าน</span>';
+      if (!svcText) svcText = '-';
 
-      // Document completeness badges
-      let docBadges = '';
-      docBadges += student.hasDisabilityCard ? 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-700 text-xs font-semibold mr-1" title="มีบัตรประจำตัวคนพิการ">บ</span>' : 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-xs font-semibold mr-1" title="ไม่มีบัตรประจำตัวคนพิการ">-</span>';
-      
-      docBadges += student.hasDisabilityCert ? 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold mr-1" title="มีเอกสารรับรองความพิการ">ใบ</span>' : 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-xs font-semibold mr-1" title="ไม่มีเอกสารรับรองความพิการ">-</span>';
-      
-      docBadges += student.hasEducationScreening ? 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-cyan-100 text-cyan-700 text-xs font-semibold" title="มีแบบคัดกรองทางการศึกษา">ค</span>' : 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-xs font-semibold" title="ไม่มีแบบคัดกรองทางการศึกษา">-</span>';
+      // 2. Normalized Disability (Matching Image 3)
+      const displayDis = getNormalizedDisability(student.disabilityByCard, true) !== 'ยังไม่มีบัตรคนพิการ' 
+        ? getNormalizedDisability(student.disabilityByCard, true) 
+        : (getNormalizedDisability(student.disabilityByScreening, false) !== 'ไม่ระบุ' 
+           ? getNormalizedDisability(student.disabilityByScreening, false) 
+           : '-');
 
-      // Status labels (Non-Thai or Disabled later)
-      let statusLabels = '';
-      if (student.nonThai) {
-        statusLabels += '<span class="px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded-md font-medium mr-1">ไม่ใช่สัญชาติไทย</span>';
-      }
-      if (student.disabledLater) {
-        statusLabels += '<span class="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded-md font-medium">พิการภายหลัง</span>';
-      }
-      if (!statusLabels) statusLabels = '<span class="text-gray-400">-</span>';
-
-      const displayDis = getNormalizedDisability(student.disabilityByScreening, false) !== 'ไม่ระบุ' 
-        ? getNormalizedDisability(student.disabilityByScreening, false) 
-        : '-';
-
+      // 3. Age in years
       const age = calculateAge(student.dateOfBirth, student);
-      const dobText = toThaiBuddhistDateString(student.dateOfBirth) + (student.age ? ` (${student.age})` : (age !== null ? ` (${age} ปี)` : ''));
+      const ageText = student.age || (age !== null ? `${age} ปี` : '-');
 
-      let cellsHtml = '';
-      state.columnOrder.forEach(colId => {
-        cellsHtml += getColumnCellHtml(colId, student, svcText, docBadges, dobText, statusLabels, displayDis);
-      });
-
-      let actionButtons = `
-        <button type="button" onclick="toggleStudentAccordion(${student.rowNumber})" class="p-1.5 px-2.5 text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition font-semibold inline-flex items-center gap-1 shadow-xs" title="คลิกเพื่อคลี่ดูข้อมูล">
+      // 4. Action button: ONLY "รายละเอียด" (NO edit, NO delete buttons)
+      const actionButtons = `
+        <button type="button" onclick="toggleStudentAccordion(${student.rowNumber})" class="p-1 px-2.5 text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition font-semibold inline-flex items-center gap-1 shadow-xs" title="คลิกเพื่อคลี่ดูข้อมูล">
           <i data-lucide="chevron-down" id="studentAccordionChevron_${student.rowNumber}" class="w-3.5 h-3.5 text-emerald-700 transition-transform duration-200"></i>
           <span>รายละเอียด</span>
         </button>
       `;
-      if (state.adminToken) {
-        actionButtons += `
-          <button onclick="editStudentByRow(${student.rowNumber})" class="p-2 text-emerald-700 hover:bg-emerald-500/10 rounded-lg transition" title="แก้ไข">
-            <i data-lucide="edit-3" class="w-4 h-4"></i>
-          </button>
-          <button onclick="deleteStudentByRow(${student.rowNumber}, '${student.name.replace(/'/g, "\\'")}', '${(student.studentId || '').replace(/'/g, "\\'")}')" class="p-2 text-red-600 hover:bg-red-500/10 rounded-lg transition" title="ลบ">
-            <i data-lucide="trash-2" class="w-4 h-4"></i>
-          </button>
-        `;
-      }
 
       const cardHtml = buildStudentAccordionCardHtml(student);
       const rowHtml = `
         <tr id="studentRow_${student.rowNumber}" onclick="toggleStudentAccordion(${student.rowNumber})" class="hover:bg-emerald-50/40 border-b border-emerald-100/40 transition cursor-pointer select-none">
-          ${cellsHtml}
-          <td class="px-6 py-4 text-sm text-right whitespace-nowrap">
-            <div class="flex items-center justify-end gap-2" onclick="event.stopPropagation()">
+          <td class="px-2.5 py-2 text-xs font-medium text-emerald-950">${student.name}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${displayDis}</td>
+          <td class="px-1.5 py-2 text-xs text-center font-medium text-gray-700">${ageText}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${student.classroom || '-'}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${svcText}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${student.teacher || '-'}</td>
+          <td class="px-2.5 py-2 text-xs text-center whitespace-nowrap">
+            <div class="flex items-center justify-center gap-1" onclick="event.stopPropagation()">
               ${actionButtons}
             </div>
           </td>
         </tr>
         <tr id="studentSubRow_${student.rowNumber}" class="student-accordion-subrow hidden bg-emerald-50/20 border-b border-emerald-100/40">
-          <td colspan="${state.columnOrder.length + 1}" class="p-2 sm:p-3">
+          <td colspan="7" class="p-2 sm:p-3">
             ${cardHtml}
           </td>
         </tr>
@@ -1128,8 +1173,6 @@ const google = {
     });
 
     lucide.createIcons();
-    // Sync scrollbars after rendering
-    setTimeout(syncScrollbarWidths, 100);
   }
 
   // Thai Date formatting helper
@@ -2169,7 +2212,7 @@ const google = {
 
     const tbody = $('#drillDownTableBody').empty();
     if (filtered.length === 0) {
-      tbody.append('<tr><td colspan="7" class="px-4 py-6 text-center text-gray-400">ไม่พบข้อมูลนักเรียนในกลุ่มนี้</td></tr>');
+      tbody.append('<tr><td colspan="6" class="px-4 py-6 text-center text-gray-400">ไม่พบข้อมูลนักเรียนในกลุ่มนี้</td></tr>');
     } else {
       filtered.forEach(s => {
         let svcText = '';
@@ -2189,18 +2232,12 @@ const google = {
 
         tbody.append(`
           <tr class="hover:bg-emerald-50/20 border-b border-emerald-100/20 transition">
-            <td class="px-4 py-2 font-medium text-emerald-950 hover:text-emerald-700 hover:underline cursor-pointer sticky-col" onclick="openStudentProfileByRow(${s.rowNumber})">${s.name}</td>
+            <td class="px-4 py-2 font-medium text-emerald-950">${s.name}</td>
             <td class="px-4 py-2">${displayDis}</td>
             <td class="px-4 py-2 text-center font-medium">${ageText}</td>
             <td class="px-4 py-2">${s.classroom}</td>
             <td class="px-4 py-2">${svcText}</td>
             <td class="px-4 py-2">${s.teacher}</td>
-            <td class="px-4 py-2 text-center whitespace-nowrap">
-              <button type="button" onclick="openStudentProfileByRow(${s.rowNumber})" class="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold text-xs transition inline-flex items-center gap-1 shadow-xs" title="ดูข้อมูลประวัตินักเรียน">
-                <i data-lucide="id-card" class="w-3.5 h-3.5 text-emerald-700"></i>
-                <span>ดูข้อมูล</span>
-              </button>
-            </td>
           </tr>
         `);
       });
@@ -3007,9 +3044,7 @@ const google = {
 
       const rawName = setRec.fullName || sheetRec.name || '-';
       let name = SETImporter.escapeHtml(rawName);
-      if (item.category === 'sheets_only') {
-        name += ` <span class="inline-block ml-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">มีเฉพาะใน sheet</span>`;
-      }
+
 
       const dob = setRec.dob || sheetRec.dateOfBirth || '-';
       let age = setRec.age || sheetRec.age || '';
@@ -3437,37 +3472,30 @@ const google = {
       </span>
     `;
 
-    // Special status badges (non-Thai, disabled later, sheets only)
+    // Special status badges (non-Thai, disabled later)
+    const hasSpecialStatus = (student.nonThai === 1 || student.nonThai === '1') || (student.disabledLater === 1 || student.disabledLater === '1');
     let specialBadgesHtml = '';
-    if (student.nonThai === 1) {
+    if (student.nonThai === 1 || student.nonThai === '1') {
       specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-rose-100 text-rose-800 rounded border border-rose-200">ไม่ใช่สัญชาติไทย</span>';
     }
-    if (student.disabledLater === 1) {
+    if (student.disabledLater === 1 || student.disabledLater === '1') {
       specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-800 rounded border border-amber-200">พิการภายหลัง</span>';
-    }
-    if (student.isSheetsOnly || student.category === 'sheets_only') {
-      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-purple-100 text-purple-800 rounded border border-purple-200">มีเฉพาะใน sheet</span>';
-    }
-    if (!specialBadgesHtml) {
-      specialBadgesHtml = '<span class="text-xs text-slate-400">สถานะทั่วไป</span>';
     }
 
     return `
-      <div class="p-3.5 sm:p-4 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 rounded-xl border border-emerald-200/70 shadow-sm text-left">
+      <div class="p-3 sm:p-4 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 rounded-xl border border-emerald-200/70 shadow-sm text-left">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3.5">
           <!-- Column 1: ข้อมูลทั่วไปและการศึกษา -->
           <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
             <div>
-              <div class="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-emerald-100/70">
-                <span class="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
-                  <i data-lucide="user" class="w-3.5 h-3.5 text-emerald-700"></i>
-                  <span>ข้อมูลพื้นฐาน & การศึกษา</span>
-                </span>
-                <span class="text-[11px] font-mono px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded font-bold border border-emerald-100">รหัส ${studentId}</span>
+              <div class="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-100/70">
+                <i data-lucide="user" class="w-3.5 h-3.5 text-emerald-700"></i>
+                <span class="font-bold text-xs text-emerald-950">ข้อมูลพื้นฐาน & การศึกษา</span>
               </div>
               <div class="space-y-1 text-xs text-slate-700 leading-relaxed">
+                <div><span class="text-slate-500">รหัสนักเรียน:</span> <strong class="text-emerald-900 font-mono">${studentId}</strong></div>
                 <div><span class="text-slate-500">ชื่อ-สกุล:</span> <strong class="text-slate-900">${student.name || '-'}</strong></div>
-                <div><span class="text-slate-500">เพศ/อายุ:</span> <span class="font-medium text-slate-800">${gender} • ${ageStr}</span></div>
+                <div><span class="text-slate-500">อายุ:</span> <span class="font-medium text-slate-800">${ageStr}</span></div>
                 <div><span class="text-slate-500">วันเดือนปีเกิด:</span> <span class="text-slate-800">${dobText}</span></div>
                 <div><span class="text-slate-500">ห้องเรียน/หน่วยบริการ:</span> <span class="font-semibold text-emerald-850">${student.classroom || '-'}</span></div>
                 <div><span class="text-slate-500">ครูผู้รับผิดชอบ:</span> <span class="font-medium text-slate-800">${student.teacher || '-'}</span></div>
@@ -3502,41 +3530,53 @@ const google = {
             </div>
           </div>
 
-          <!-- Column 3: ที่อยู่และสถานะ + ดู Modal -->
+          <!-- Column 3: ที่อยู่และสถานะ -->
           <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
             <div>
               <div class="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-100/70">
                 <i data-lucide="home" class="w-3.5 h-3.5 text-emerald-700"></i>
-                <span class="font-bold text-xs text-emerald-950">ที่อยู่ & สถานะพิเศษ</span>
+                <span class="font-bold text-xs text-emerald-950">${hasSpecialStatus ? 'ที่อยู่ & สถานะพิเศษ' : 'ข้อมูลที่อยู่'}</span>
               </div>
               <div class="space-y-2 text-xs text-slate-700">
                 <div>
                   <div class="text-[11px] text-slate-500 mb-0.5">ที่อยู่ตามทะเบียนบ้าน:</div>
-                  <div class="text-slate-800 bg-slate-50 p-1.5 rounded border border-slate-100 text-xs leading-relaxed max-h-16 overflow-y-auto">${student.address || '-'}</div>
+                  <div class="text-slate-800 bg-slate-50 p-2 rounded border border-slate-100 text-xs leading-relaxed max-h-24 overflow-y-auto">${student.address || '-'}</div>
                 </div>
+                ${hasSpecialStatus ? `
                 <div>
                   <div class="text-[11px] text-slate-500 mb-1">สถานะพิเศษ:</div>
                   <div class="flex flex-wrap gap-1">
                     ${specialBadgesHtml}
                   </div>
                 </div>
+                ` : ''}
               </div>
-            </div>
-            <div class="pt-2 mt-2 border-t border-emerald-100/70 flex items-center justify-between gap-2">
-              <span class="text-[10px] text-emerald-700 font-medium flex items-center gap-1">
-                <i data-lucide="shield-check" class="w-3 h-3"></i>
-                Zero-PII
-              </span>
-              <button type="button" onclick="openStudentProfileByRow(${student.rowNumber})" class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition inline-flex items-center gap-1">
-                <i data-lucide="id-card" class="w-3.5 h-3.5"></i>
-                <span>ดูแฟ้มประวัติเต็ม</span>
-              </button>
             </div>
           </div>
         </div>
       </div>
     `;
   }
+
+    function clearFiltersExceptSearch() {
+    $('#filterClassroom').val('').trigger('change');
+    $('#filterTeacher').val('').trigger('change');
+    $('#filterDisabilityCard').val('').trigger('change');
+    $('#filterDisabilityScreen').val('').trigger('change');
+    $('#filterAgeRange').val('').trigger('change');
+    $('#filterAgeYear').val('').trigger('change');
+    $('#filterSvcCenter').prop('checked', false);
+    $('#filterSvcUnit').prop('checked', false);
+    $('#filterSvcHome').prop('checked', false);
+    $('#filterDocCard').prop('checked', false);
+    $('#filterDocCert').prop('checked', false);
+    $('#filterDocScreen').prop('checked', false);
+    $('#filterStatusNonThai').prop('checked', false);
+    $('#filterStatusLater').prop('checked', false);
+    applyFilters();
+  }
+
+  window.clearFiltersExceptSearch = clearFiltersExceptSearch;
 
   function toggleStudentAccordion(rowNumber) {
     const subRow = $(`#studentSubRow_${rowNumber}`);

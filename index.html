@@ -105,7 +105,7 @@
 
         <a href="#" data-section="students" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800" id="navStudents">
           <i data-lucide="users" class="w-4.5 h-4.5"></i>
-          <span>แฟ้มรายชื่อนักเรียน</span>
+          <span>ข้อมูลนักเรียนรายบุคคล</span>
         </a>
 
         <a href="#" data-section="pivot" class="nav-link flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800" id="navPivot" style="display:none;">
@@ -113,14 +113,14 @@
           <span>ตารางวิเคราะห์ความสัมพันธ์ของข้อมูล</span>
         </a>
 
-        <button id="btnToggleAdvancedSearch" class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800 w-full text-left">
-          <i data-lucide="search" class="w-4.5 h-4.5"></i>
-          <span>ค้นหาแบบละเอียด</span>
-          <i data-lucide="chevron-down" class="w-4 h-4 ml-auto transition-transform" id="iconAdvancedSearch"></i>
+        <button id="btnToggleAdvancedSearch" class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-600 transition hover:bg-white/50 hover:text-emerald-800 w-full text-left hidden">
+          <i data-lucide="filter" class="w-4.5 h-4.5 text-emerald-700"></i>
+          <span>ตัวกรองหลายชั้น</span>
+          <i data-lucide="chevron-down" class="w-4 h-4 ml-auto transition-transform rotate-180" id="iconAdvancedSearch"></i>
         </button>
       </div>
 
-      <!-- FILTER CONTROLS: Multi-Level Filters (hidden by default, toggled by ค้นหาแบบละเอียด) -->
+      <!-- FILTER CONTROLS: Multi-Level Filters (hidden by default on overview, shown on students page) -->
       <div id="filterPanel" class="glass-panel p-5 flex flex-col gap-5 hidden">
         <div class="flex items-center justify-between border-b border-emerald-100/50 pb-2">
           <div class="flex items-center gap-2 text-emerald-900 font-bold text-sm">
@@ -375,40 +375,6 @@
           </div>
         </div>
 
-
-
-        <!-- Drill-down Student Details from Chart / Search (Lifted Up Right Below Counter Cards) -->
-        <div id="chartDrillDownContainer" class="glass-panel-drilldown p-5 flex flex-col gap-4 hidden">
-          <div class="flex items-center justify-between border-b border-emerald-100/50 pb-2.5 gap-2">
-            <h3 class="font-bold text-sm text-emerald-955 flex items-center gap-2">
-              <i data-lucide="info" class="w-4 h-4 text-emerald-800"></i>
-              <span>รายละเอียดของข้อมูล: <span id="drillDownGroupTitle" class="text-emerald-850 font-extrabold"></span></span>
-            </h3>
-            <button id="btnCloseDrillDown" class="text-xs text-gray-500 hover:text-red-600 font-semibold flex items-center gap-1 transition">
-              <i data-lucide="x" class="w-3.5 h-3.5"></i>
-              ปิดส่วนนี้
-            </button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr class="border-b border-emerald-200/50 text-emerald-850 font-semibold">
-                  <th class="px-4 py-2 sticky-col">ชื่อ-สกุล</th>
-                  <th class="px-4 py-2">ประเภทความพิการ</th>
-                  <th class="px-4 py-2 text-center">อายุ (ปี)</th>
-                  <th class="px-4 py-2">ห้องเรียน/หน่วยบริการ</th>
-                  <th class="px-4 py-2">ประเภทการบริการ</th>
-                  <th class="px-4 py-2">ครูผู้รับผิดชอบ</th>
-                  <th class="px-4 py-2 text-center whitespace-nowrap">ประวัติ</th>
-                </tr>
-              </thead>
-              <tbody id="drillDownTableBody" class="divide-y divide-emerald-100/30 text-gray-700">
-                <!-- Rows populated dynamically with expandable accordion -->
-              </tbody>
-            </table>
-          </div>
-        </div>
-
         <!-- Charts Section -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           
@@ -448,7 +414,7 @@
               บริการนอกศูนย์ (แยกตามอำเภอ)
             </span>
             <div class="overflow-x-auto">
-              <table class="w-full text-left border-collapse">
+              <table class="w-full text-left border-collapse text-xs">
                 <tbody id="districtStatsTableBody" class="divide-y divide-emerald-100/10 text-gray-700">
                   <!-- Dynamic rows -->
                 </tbody>
@@ -471,6 +437,37 @@
             </div>
           </div>
 
+        </div>
+
+        <!-- Drill-down Student Details from Chart -->
+        <div id="chartDrillDownContainer" class="glass-panel-drilldown p-5 flex flex-col gap-4 hidden">
+          <div class="flex items-center justify-between border-b border-emerald-100/50 pb-2.5 gap-2">
+            <h3 class="font-bold text-sm text-emerald-955 flex items-center gap-2">
+              <i data-lucide="info" class="w-4 h-4 text-emerald-800"></i>
+              <span>รายละเอียดของข้อมูล: <span id="drillDownGroupTitle" class="text-emerald-850 font-extrabold"></span></span>
+            </h3>
+            <button id="btnCloseDrillDown" class="text-xs text-gray-500 hover:text-red-600 font-semibold flex items-center gap-1 transition">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+              ปิดส่วนนี้
+            </button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-emerald-200/50 text-emerald-850 font-semibold">
+                  <th class="px-4 py-2 sticky-col">ชื่อ-สกุล</th>
+                  <th class="px-4 py-2">ประเภทความพิการ</th>
+                  <th class="px-4 py-2 text-center">อายุ (ปี)</th>
+                  <th class="px-4 py-2">ห้องเรียน/หน่วยบริการ</th>
+                  <th class="px-4 py-2">ประเภทการบริการ</th>
+                  <th class="px-4 py-2">ครูผู้รับผิดชอบ</th>
+                </tr>
+              </thead>
+              <tbody id="drillDownTableBody" class="divide-y divide-emerald-100/30 text-gray-700">
+                <!-- Rows populated dynamically -->
+              </tbody>
+            </table>
+          </div>
         </div>
 
       </div>
@@ -507,32 +504,11 @@
           </div>
         </div>
 
-        <!-- Legend for Document Symbols -->
-        <div class="flex flex-wrap items-center gap-4 text-xs text-gray-600 bg-white/60 px-5 py-2.5 rounded-xl border border-emerald-100/50 shadow-sm">
-          <span class="font-bold text-emerald-900 flex items-center gap-1">
-            <i data-lucide="info" class="w-3.5 h-3.5 animate-pulse"></i>
-            คำอธิบายสัญลักษณ์เอกสาร:
-          </span>
-          <span class="flex items-center gap-1">
-            <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-100 text-green-700 font-semibold text-[10px]">บ</span>
-            มีบัตรประจำตัวคนพิการ
-          </span>
-          <span class="flex items-center gap-1">
-            <span class="inline-flex items-center justify-center w-8 h-5 rounded-full bg-emerald-100 text-emerald-700 font-semibold text-[10px] px-1.5">ใบ</span>
-            มีเอกสารรับรองความพิการ
-          </span>
-          <span class="flex items-center gap-1">
-            <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-cyan-100 text-cyan-700 font-semibold text-[10px]">ค</span>
-            มีแบบคัดกรองทางการศึกษา
-          </span>
-        </div>
+
 
         <!-- Student Data Table -->
         <div class="glass-panel overflow-hidden p-4 flex flex-col gap-1">
-          <!-- Top horizontal scrollbar synchronized with main table container -->
-          <div id="studentTopScrollbarWrapper" class="overflow-x-auto w-full hidden bg-gray-50/10 rounded-full" style="height: 12px; min-height: 12px; margin-bottom: 2px;">
-            <div id="studentTopScrollbarDummy" style="height: 1px;"></div>
-          </div>
+
           <div id="studentTableContainer" class="overflow-x-auto">
             <table class="w-full text-left border-collapse">
               <thead>
@@ -806,7 +782,7 @@
                   <div class="flex items-center justify-between">
                     <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                       <i data-lucide="file-text" class="w-4 h-4 text-emerald-700"></i>
-                      รายงานข้อมูลนักเรียนแบบละเอียด1 <span class="text-red-500">*</span>
+                      ไฟล์ Excel 1 <span class="text-red-500">*</span>
                     </span>
                     <span id="badgeSetGeneral" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium">ยังไม่เลือก</span>
                   </div>
@@ -828,7 +804,7 @@
                   <div class="flex items-center justify-between">
                     <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                       <i data-lucide="home" class="w-4 h-4 text-emerald-700"></i>
-                      รายงานข้อมูลนักเรียนแบบละเอียด2
+                      ไฟล์ Excel 2
                     </span>
                     <span id="badgeSetAddress" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium">ยังไม่เลือก</span>
                   </div>
@@ -850,7 +826,7 @@
                   <div class="flex items-center justify-between">
                     <span class="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                       <i data-lucide="link-2" class="w-4 h-4 text-gray-500"></i>
-                      รายงานข้อมูลนักเรียนแบบละเอียด3
+                      ไฟล์ Excel 3
                     </span>
                     <span id="badgeSetLink" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 font-medium">ทางเลือก</span>
                   </div>
