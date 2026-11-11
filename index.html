@@ -69,9 +69,13 @@
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
 
+  <!-- SheetJS for Client-Side Excel (.xls, .xlsx) Reading (Secure Official Release) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
   <!-- Injection of Custom CSS -->
   <link rel="stylesheet" href="style.css">
   <script src="config.js"></script>
+  <script src="set-importer.js"></script>
 </head>
 <body class="p-3 md:p-6">
 
@@ -651,23 +655,46 @@
       <!-- SECTION 4: ADMIN SETTINGS VIEW -->
       <div id="adminSection" class="app-section hidden flex flex-col gap-6">
         
-        <div class="glass-panel p-6 flex flex-col gap-5">
-          <div class="flex items-center gap-3 border-b border-emerald-100/50 pb-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-800 to-cyan-700 flex items-center justify-center text-white">
-              <i data-lucide="settings" class="w-5 h-5"></i>
+        <!-- Admin Sub-navigation Tabs -->
+        <div class="glass-panel p-2 flex flex-col sm:flex-row items-center gap-2">
+          <button type="button" id="adminTabBtnGeneral" class="admin-tab-btn w-full sm:flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2 bg-emerald-700 text-white shadow-sm">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            <span>ตั้งค่าระบบและฐานข้อมูล</span>
+          </button>
+          <button type="button" id="adminTabBtnSetImport" class="admin-tab-btn w-full sm:flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2 text-gray-600 hover:bg-white/50 hover:text-emerald-800">
+            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+            <span>นำเข้าและตรวจสอบข้อมูล SET (Excel Preview)</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">Phase 1</span>
+          </button>
+        </div>
+
+        <!-- TAB 1: General Database & App Settings Panel -->
+        <div id="adminTabPanelGeneral" class="glass-panel p-6 flex flex-col gap-5">
+          <div class="flex items-center justify-between border-b border-emerald-100/50 pb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-800 to-cyan-700 flex items-center justify-center text-white">
+                <i data-lucide="settings" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-base text-emerald-900">แผงตั้งค่าระบบสำหรับผู้ดูแล (Admin Settings)</h3>
+                <p class="text-xs text-gray-500">จัดการฐานข้อมูลและกำหนดค่าตั้งอ้างอิงสำหรับสถิติรายงาน</p>
+              </div>
             </div>
-            <div>
-              <h3 class="font-bold text-base text-emerald-900">แผงตั้งค่าระบบสำหรับผู้ดูแล (Admin Settings)</h3>
-              <p class="text-xs text-gray-500">จัดการฐานข้อมูลและกำหนดค่าตั้งอ้างอิงสำหรับสถิติรายงาน</p>
-            </div>
+            <button type="button" id="btnAdminLogout" class="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold flex items-center gap-1.5 transition" title="ออกจากเซสชันผู้ดูแลระบบ">
+              <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+              <span>ออกจากระบบ Admin</span>
+            </button>
           </div>
           
           <div class="grid grid-cols-1 gap-5">
             <!-- Google Sheet URL Configuration -->
             <div class="flex flex-col gap-2">
-              <label class="text-sm font-semibold text-gray-700">ลิงก์ Google Sheet ฐานข้อมูล</label>
+              <label class="text-sm font-semibold text-gray-700 flex items-center justify-between">
+                <span>ลิงก์ Google Sheet ฐานข้อมูล</span>
+                <span class="text-xs text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded font-normal">กำหนดผ่าน Script Properties (อ่านอย่างเดียว)</span>
+              </label>
               <div class="flex flex-col sm:flex-row gap-3">
-                <input type="text" id="adminSpreadsheetUrl" placeholder="https://docs.google.com/spreadsheets/d/..." class="glass-input text-sm flex-1">
+                <input type="text" id="adminSpreadsheetUrl" readonly placeholder="https://docs.google.com/spreadsheets/d/..." class="glass-input text-sm flex-1 bg-gray-50 cursor-not-allowed">
                 <button type="button" id="btnAdminFetchTabs" class="glass-btn-primary text-sm flex items-center justify-center gap-1.5 whitespace-nowrap">
                   <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                   ดึงรายชื่อแผ่นงาน
@@ -754,6 +781,285 @@
             </div>
             
           </div>
+        </div>
+
+        <!-- TAB 2: SET Excel Import & Preview Panel -->
+        <div id="adminTabPanelSetImport" class="flex flex-col gap-6 hidden">
+          
+          <!-- SET Panel Header -->
+          <div class="glass-panel p-6 flex flex-col gap-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-100/50 pb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-800 to-cyan-700 flex items-center justify-center text-white">
+                  <i data-lucide="file-spreadsheet" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <h3 class="font-bold text-base text-emerald-900">ระบบนำเข้าและตรวจสอบข้อมูลจาก SET (SET Import & Preview)</h3>
+                  <p class="text-xs text-gray-500">ตรวจสอบโครงสร้างไฟล์ Excel (.xls, .xlsx) เชื่อมโยงหลายรายงาน และเปรียบเทียบข้อมูลก่อนนำเข้าจริง</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+                  In-Memory Preview (ไม่แก้ไขข้อมูลจริง)
+                </span>
+              </div>
+            </div>
+
+            <!-- Upload Area: 3 Report Files -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <!-- File 1: General Info -->
+              <div class="glass-card p-4 flex flex-col justify-between border-2 border-dashed border-emerald-200 hover:border-emerald-500 transition">
+                <div class="flex flex-col gap-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                      <i data-lucide="file-text" class="w-4 h-4 text-emerald-700"></i>
+                      1. รายงานข้อมูลนักเรียน <span class="text-red-500">*</span>
+                    </span>
+                    <span id="badgeSetGeneral" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium">ยังไม่เลือก</span>
+                  </div>
+                  <p class="text-xs text-gray-500">ข้อมูลทั่วไป: รหัสนักเรียน, เลขบัตร ปชช., ชื่อ-สกุล, วันเกิด, เพศ, ความพิการ</p>
+                </div>
+                <div class="mt-4 flex flex-col gap-2">
+                  <input type="file" id="setFileGeneral" accept=".xls,.xlsx" class="hidden">
+                  <button type="button" onclick="$('#setFileGeneral').click()" class="glass-btn-secondary text-xs flex items-center justify-center gap-1.5 py-2">
+                    <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                    <span>เลือกไฟล์ Excel (.xls, .xlsx)</span>
+                  </button>
+                  <div id="fileInfoGeneral" class="text-[11px] text-gray-600 truncate font-mono"></div>
+                </div>
+              </div>
+
+              <!-- File 2: Address Info -->
+              <div class="glass-card p-4 flex flex-col justify-between border-2 border-dashed border-emerald-200 hover:border-emerald-500 transition">
+                <div class="flex flex-col gap-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                      <i data-lucide="home" class="w-4 h-4 text-emerald-700"></i>
+                      2. รายงานข้อมูลที่อยู่ตามทะเบียนบ้าน
+                    </span>
+                    <span id="badgeSetAddress" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 font-medium">ยังไม่เลือก</span>
+                  </div>
+                  <p class="text-xs text-gray-500">ข้อมูลที่อยู่: เลขบัตร ปชช., ที่อยู่, ตำบล, อำเภอ, จังหวัด, รหัสไปรษณีย์</p>
+                </div>
+                <div class="mt-4 flex flex-col gap-2">
+                  <input type="file" id="setFileAddress" accept=".xls,.xlsx" class="hidden">
+                  <button type="button" onclick="$('#setFileAddress').click()" class="glass-btn-secondary text-xs flex items-center justify-center gap-1.5 py-2">
+                    <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                    <span>เลือกไฟล์ Excel (.xls, .xlsx)</span>
+                  </button>
+                  <div id="fileInfoAddress" class="text-[11px] text-gray-600 truncate font-mono"></div>
+                </div>
+              </div>
+
+              <!-- File 3: Link/Additional Info -->
+              <div class="glass-card p-4 flex flex-col justify-between border-2 border-dashed border-gray-200 hover:border-emerald-500 transition">
+                <div class="flex flex-col gap-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                      <i data-lucide="link-2" class="w-4 h-4 text-gray-500"></i>
+                      3. รายงานเชื่อมโยงรหัส (ทางเลือก)
+                    </span>
+                    <span id="badgeSetLink" class="text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 font-medium">ทางเลือก</span>
+                  </div>
+                  <p class="text-xs text-gray-500">ไฟล์เชื่อมรหัสนักเรียนกับเลขบัตรประชาชน (กรณีรายงานแยกไฟล์)</p>
+                </div>
+                <div class="mt-4 flex flex-col gap-2">
+                  <input type="file" id="setFileLink" accept=".xls,.xlsx" class="hidden">
+                  <button type="button" onclick="$('#setFileLink').click()" class="glass-btn-secondary text-xs flex items-center justify-center gap-1.5 py-2">
+                    <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                    <span>เลือกไฟล์ Excel (ถ้ามี)</span>
+                  </button>
+                  <div id="fileInfoLink" class="text-[11px] text-gray-600 truncate font-mono"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action Controls Bar -->
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-emerald-100/50">
+              <div class="flex flex-wrap items-center gap-2">
+                <button type="button" id="btnRunSetPreview" class="glass-btn-primary text-sm flex items-center gap-2" disabled>
+                  <i data-lucide="play-circle" class="w-4 h-4"></i>
+                  <span>ประมวลผลและเปรียบเทียบข้อมูล (Run Preview)</span>
+                </button>
+                <button type="button" id="btnLoadMockSetData" class="glass-btn-secondary text-sm flex items-center gap-1.5 bg-white/70 hover:bg-white text-emerald-800 border-emerald-300">
+                  <i data-lucide="flask-conical" class="w-4 h-4 text-emerald-600"></i>
+                  <span>โหลดข้อมูลทดสอบจำลอง (Mock Data)</span>
+                </button>
+                <button type="button" id="btnClearSetData" class="text-xs text-gray-500 hover:text-red-600 px-3 py-2 transition flex items-center gap-1">
+                  <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                  ล้างข้อมูล
+                </button>
+              </div>
+
+              <!-- PII Masking Switch -->
+              <div class="flex items-center gap-2">
+                <button type="button" id="btnTogglePiiMask" class="glass-btn-secondary text-xs flex items-center gap-1.5 px-3 py-1.5 text-gray-700">
+                  <i data-lucide="eye" class="w-3.5 h-3.5 text-emerald-700" id="iconPiiMask"></i>
+                  <span id="textPiiMask">ซ่อนเลขบัตรประชาชน (Masked)</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Validation & Warnings Alerts Box -->
+            <div id="setValidationAlertBox" class="hidden flex flex-col gap-2 p-4 rounded-xl border"></div>
+          </div>
+
+          <!-- Preview Results Container (Shown after running preview) -->
+          <div id="setPreviewResultsContainer" class="flex flex-col gap-6 hidden">
+            
+            <!-- Summary Counters (6 Category Cards) -->
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+              <!-- 1. New in SET -->
+              <div class="glass-panel p-4 cursor-pointer hover:scale-102 transition border-l-4 border-blue-500 set-category-card" data-category="new">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-blue-900">รายการใหม่ใน SET</span>
+                  <span class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-xs font-bold">
+                    <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
+                  </span>
+                </div>
+                <div class="text-2xl font-black text-blue-700 mt-2" id="countNewInSet">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">ยังไม่มีในชีตเดิม</div>
+              </div>
+
+              <!-- 2. Updated / Diff -->
+              <div class="glass-panel p-4 cursor-pointer hover:scale-102 transition border-l-4 border-amber-500 set-category-card" data-category="updated">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-amber-900">ข้อมูลเปลี่ยนแปลง</span>
+                  <span class="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-xs font-bold">
+                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                  </span>
+                </div>
+                <div class="text-2xl font-black text-amber-700 mt-2" id="countUpdatedDiff">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">มีฟิลด์แตกต่างกัน</div>
+              </div>
+
+              <!-- 3. Matched -->
+              <div class="glass-panel p-4 cursor-pointer hover:scale-102 transition border-l-4 border-emerald-500 set-category-card" data-category="matched">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-emerald-900">ข้อมูลตรงกัน</span>
+                  <span class="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 text-xs font-bold">
+                    <i data-lucide="check-check" class="w-3.5 h-3.5"></i>
+                  </span>
+                </div>
+                <div class="text-2xl font-black text-emerald-700 mt-2" id="countMatched">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">ตรงกันสมบูรณ์</div>
+              </div>
+
+              <!-- 4. Sheets Only -->
+              <div class="glass-panel p-4 cursor-pointer hover:scale-102 transition border-l-4 border-purple-500 set-category-card" data-category="sheets_only">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-purple-900">มีเฉพาะในชีต</span>
+                  <span class="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 text-xs font-bold">
+                    <i data-lucide="file-question" class="w-3.5 h-3.5"></i>
+                  </span>
+                </div>
+                <div class="text-2xl font-black text-purple-700 mt-2" id="countSheetsOnly">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">ไม่พบใน SET (รอตรวจสอบ)</div>
+              </div>
+
+              <!-- 5. Unmatched -->
+              <div class="glass-panel p-4 cursor-pointer hover:scale-102 transition border-l-4 border-gray-400 set-category-card" data-category="unmatched">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-gray-700">จับคู่ไม่ได้</span>
+                  <span class="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 text-xs font-bold">
+                    <i data-lucide="help-circle" class="w-3.5 h-3.5"></i>
+                  </span>
+                </div>
+                <div class="text-2xl font-black text-gray-600 mt-2" id="countUnmatched">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">คีย์ไม่สมบูรณ์</div>
+              </div>
+
+              <!-- 6. Invalid / Conflicts -->
+              <div class="glass-panel p-4 cursor-pointer hover:scale-102 transition border-l-4 border-red-500 set-category-card" data-category="invalid">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-red-900">ข้อมูลผิดปกติ</span>
+                  <span class="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center text-red-700 text-xs font-bold">
+                    <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i>
+                  </span>
+                </div>
+                <div class="text-2xl font-black text-red-600 mt-2" id="countInvalid">0</div>
+                <div class="text-[11px] text-gray-500 mt-1">ฟอร์แมตผิด/ซ้ำ</div>
+              </div>
+            </div>
+
+            <!-- Category Filter Tabs & Search -->
+            <div class="glass-panel p-4 flex flex-col gap-4">
+              <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-1.5" id="setCategoryTabs">
+                  <button type="button" class="set-filter-tab px-3 py-1.5 rounded-lg text-xs font-bold transition bg-emerald-700 text-white" data-filter="all">
+                    ทั้งหมด (<span id="tabCountAll">0</span>)
+                  </button>
+                  <button type="button" class="set-filter-tab px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white/60 transition" data-filter="new">
+                    รายการใหม่ (<span id="tabCountNew">0</span>)
+                  </button>
+                  <button type="button" class="set-filter-tab px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white/60 transition" data-filter="updated">
+                    ข้อมูลเปลี่ยนแปลง (<span id="tabCountUpdated">0</span>)
+                  </button>
+                  <button type="button" class="set-filter-tab px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white/60 transition" data-filter="matched">
+                    ข้อมูลตรงกัน (<span id="tabCountMatched">0</span>)
+                  </button>
+                  <button type="button" class="set-filter-tab px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white/60 transition" data-filter="sheets_only">
+                    มีเฉพาะในชีต (<span id="tabCountSheetsOnly">0</span>)
+                  </button>
+                  <button type="button" class="set-filter-tab px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white/60 transition" data-filter="unmatched">
+                    จับคู่ไม่ได้ (<span id="tabCountUnmatched">0</span>)
+                  </button>
+                  <button type="button" class="set-filter-tab px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-white/60 transition" data-filter="invalid">
+                    ข้อมูลผิดปกติ (<span id="tabCountInvalid">0</span>)
+                  </button>
+                </div>
+
+                <!-- In-table search -->
+                <div class="relative flex items-center min-w-[240px]">
+                  <i data-lucide="search" class="w-3.5 h-3.5 text-gray-400 absolute left-3"></i>
+                  <input type="text" id="setSearchInput" placeholder="ค้นหาในตารางตัวอย่าง..." class="glass-input pl-8 py-1.5 text-xs w-full">
+                </div>
+              </div>
+
+              <!-- Preview Table -->
+              <div class="overflow-x-auto rounded-xl border border-emerald-100/60 bg-white/40">
+                <table class="w-full text-left text-xs text-gray-700">
+                  <thead class="bg-emerald-500/10 text-emerald-900 font-semibold border-b border-emerald-100/60">
+                    <tr>
+                      <th class="px-3 py-3 w-12 text-center">#</th>
+                      <th class="px-3 py-3">รหัสนักเรียน</th>
+                      <th class="px-3 py-3">เลขประจำตัวประชาชน</th>
+                      <th class="px-3 py-3">ชื่อ-สกุล (SET)</th>
+                      <th class="px-3 py-3">วันเกิด / อายุ</th>
+                      <th class="px-3 py-3">ประเภทความพิการ (SET)</th>
+                      <th class="px-3 py-3">ที่อยู่ตามทะเบียนบ้าน</th>
+                      <th class="px-3 py-3 text-center">สถานะ</th>
+                      <th class="px-3 py-3">สรุปความแตกต่าง (Diff)</th>
+                      <th class="px-3 py-3 text-center">จัดการ</th>
+                    </tr>
+                  </thead>
+                  <tbody id="setPreviewTableBody" class="divide-y divide-emerald-50">
+                    <!-- Dynamic Rows populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Empty State -->
+              <div id="setPreviewEmptyState" class="hidden py-10 flex flex-col items-center justify-center text-gray-400 gap-2">
+                <i data-lucide="inbox" class="w-8 h-8 text-gray-300"></i>
+                <span class="text-sm">ไม่พบรายการที่ตรงกับเงื่อนไขการค้นหา</span>
+              </div>
+            </div>
+
+            <!-- Safety Banner -->
+            <div class="p-4 rounded-xl bg-amber-500/10 border border-amber-300/60 flex items-start gap-3 text-amber-900 text-xs">
+              <i data-lucide="info" class="w-5 h-5 text-amber-700 shrink-0 mt-0.5"></i>
+              <div class="flex flex-col gap-1">
+                <span class="font-bold">นโยบายความปลอดภัยและการคุ้มครองข้อมูลส่วนบุคคล (Phase 1 Preview Mode):</span>
+                <span>• เลขประจำตัวประชาชนและข้อมูลส่วนบุคคลทั้งหมดถูกประมวลผลภายในหน่วยความจำของเว็บเบราว์เซอร์เท่านั้น และจะถูก Masked สำหรับการแสดงผลปกติ</span>
+                <span>• การแสดงผลนี้เป็นการจำลองเปรียบเทียบ (Preview) เท่านั้น <strong>ยังไม่มีการบันทึก ดัดแปลง หรือเขียนทับข้อมูลจริงใน Google Sheets</strong></span>
+                <span>• นักเรียนที่มีเฉพาะใน Google Sheets แต่ไม่พบในทะเบียน SET เป็นรายการที่รอผู้ดูแลระบบตรวจสอบ โดยระบบ Preview ยังไม่มีการซ่อนหรือลบข้อมูลจากเว็บไซต์จริง</span>
+              </div>
+            </div>
+
+          </div>
+
         </div>
 
       </div>
@@ -931,6 +1237,67 @@
 
     </div>
 
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- SET DIFF DETAIL MODAL (Phase 1 Preview) -->
+  <!-- ======================================================== -->
+  <div id="setDiffModal" class="fixed inset-0 bg-emerald-950/20 backdrop-blur-sm z-50 justify-center items-center p-4 hidden">
+    <div class="glass-panel-mint w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      
+      <!-- Modal Header -->
+      <div class="p-5 border-b border-emerald-100 flex items-center justify-between bg-white/40">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-emerald-700 text-white flex items-center justify-center">
+            <i data-lucide="git-compare" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-emerald-900 text-base" id="diffModalStudentName">รายละเอียดเปรียบเทียบข้อมูลนักเรียน</h3>
+            <p class="text-xs text-gray-500">เปรียบเทียบระหว่างข้อมูลจากระบบ SET กับฐานข้อมูลปัจจุบัน</p>
+          </div>
+        </div>
+        <button id="btnCloseSetDiffModal" class="p-1.5 text-gray-500 hover:text-red-600 rounded-lg hover:bg-red-500/10 transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto flex-1 flex flex-col gap-5">
+        
+        <!-- Status summary banner -->
+        <div id="diffModalStatusBanner" class="p-3.5 rounded-xl border flex items-center justify-between text-xs font-semibold">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Side-by-side comparison table -->
+        <div class="overflow-x-auto rounded-xl border border-emerald-100/60 bg-white/50">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-emerald-500/10 text-emerald-900 font-semibold border-b border-emerald-100/60">
+              <tr>
+                <th class="px-4 py-3 w-40">ฟิลด์ข้อมูล</th>
+                <th class="px-4 py-3 bg-blue-50/50">ข้อมูลจากระบบ SET</th>
+                <th class="px-4 py-3 bg-emerald-50/50">ข้อมูลปัจจุบันใน Google Sheets</th>
+                <th class="px-4 py-3 text-center w-28">ผลการเทียบ</th>
+              </tr>
+            </thead>
+            <tbody id="diffModalTableBody" class="divide-y divide-emerald-50">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-between gap-3 border-t border-emerald-100 p-4 bg-white/30 text-xs">
+        <span class="text-gray-500 flex items-center gap-1.5">
+          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-700"></i>
+          การตรวจสอบข้อมูลในหน้านี้ไม่เปลี่ยนแปลงข้อมูลจริงในฐานข้อมูล
+        </span>
+        <button type="button" id="btnCloseSetDiffModalBtn" class="glass-btn-secondary text-xs">ปิดหน้าต่าง</button>
+      </div>
+
+    </div>
   </div>
 
   <!-- Injection of Custom Frontend JS -->
