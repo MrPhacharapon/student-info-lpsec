@@ -970,8 +970,14 @@ const google = {
     $('#filteredCountBadge').text(state.filteredStudents.length);
     $('#totalCountBadge').text(state.allStudents.length);
 
-    // Live Real-Time Search: display matching students under "รายละเอียดของข้อมูล: นักเรียนทั้งหมด (ตามตัวกรอง)"
-    if (searchVal) {
+    // Multi-tier Live Filtering & Real-Time Search:
+    // Auto-display matching students in lifted #chartDrillDownContainer right below counter cards
+    const hasActiveFilter = Boolean(
+      searchVal || classroomVal || teacherVal || disCardVal || disScrVal || 
+      ageRangeVal || ageYearVal || svcInCenter || svcSvcUnit || svcHome || 
+      docCard || docCert || docScreen || statusNonThai || statusLater
+    );
+    if (hasActiveFilter) {
       state.currentDrillDownType = 'total';
       showDrillDownDetails('total', '', false);
     } else if (state.currentDrillDownType === 'total') {
@@ -1086,9 +1092,9 @@ const google = {
       });
 
       let actionButtons = `
-        <button type="button" onclick="openStudentProfileByRow(${student.rowNumber})" class="p-1.5 px-2.5 text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition font-semibold inline-flex items-center gap-1 shadow-xs" title="ดูข้อมูลประวัตินักเรียน">
-          <i data-lucide="id-card" class="w-3.5 h-3.5 text-emerald-700"></i>
-          <span>ดูข้อมูล</span>
+        <button type="button" onclick="toggleStudentAccordion(${student.rowNumber})" class="p-1.5 px-2.5 text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition font-semibold inline-flex items-center gap-1 shadow-xs" title="คลิกเพื่อคลี่ดูข้อมูล">
+          <i data-lucide="chevron-down" id="studentAccordionChevron_${student.rowNumber}" class="w-3.5 h-3.5 text-emerald-700 transition-transform duration-200"></i>
+          <span>รายละเอียด</span>
         </button>
       `;
       if (state.adminToken) {
@@ -1102,13 +1108,19 @@ const google = {
         `;
       }
 
+      const cardHtml = buildStudentAccordionCardHtml(student);
       const rowHtml = `
-        <tr class="hover:bg-white/40 border-b border-emerald-100/40 transition">
+        <tr id="studentRow_${student.rowNumber}" onclick="toggleStudentAccordion(${student.rowNumber})" class="hover:bg-emerald-50/40 border-b border-emerald-100/40 transition cursor-pointer select-none">
           ${cellsHtml}
           <td class="px-6 py-4 text-sm text-right whitespace-nowrap">
-            <div class="flex items-center justify-end gap-2">
+            <div class="flex items-center justify-end gap-2" onclick="event.stopPropagation()">
               ${actionButtons}
             </div>
+          </td>
+        </tr>
+        <tr id="studentSubRow_${student.rowNumber}" class="student-accordion-subrow hidden bg-emerald-50/20 border-b border-emerald-100/40">
+          <td colspan="${state.columnOrder.length + 1}" class="p-2 sm:p-3">
+            ${cardHtml}
           </td>
         </tr>
       `;
@@ -2157,7 +2169,7 @@ const google = {
 
     const tbody = $('#drillDownTableBody').empty();
     if (filtered.length === 0) {
-      tbody.append('<tr><td colspan="6" class="px-4 py-6 text-center text-gray-400">ไม่พบข้อมูลนักเรียนในกลุ่มนี้</td></tr>');
+      tbody.append('<tr><td colspan="7" class="px-4 py-6 text-center text-gray-400">ไม่พบข้อมูลนักเรียนในกลุ่มนี้</td></tr>');
     } else {
       filtered.forEach(s => {
         let svcText = '';
@@ -2176,10 +2188,10 @@ const google = {
         const ageText = s.age || (age !== null ? `${age} ปี` : 'ไม่ระบุ');
 
         tbody.append(`
-          <tr class="hover:bg-emerald-50/20 border-b border-emerald-100/20">
+          <tr class="hover:bg-emerald-50/20 border-b border-emerald-100/20 transition">
             <td class="px-4 py-2 font-medium text-emerald-950 hover:text-emerald-700 hover:underline cursor-pointer sticky-col" onclick="openStudentProfileByRow(${s.rowNumber})">${s.name}</td>
             <td class="px-4 py-2">${displayDis}</td>
-            <td class="px-4 py-2 text-center">${ageText}</td>
+            <td class="px-4 py-2 text-center font-medium">${ageText}</td>
             <td class="px-4 py-2">${s.classroom}</td>
             <td class="px-4 py-2">${svcText}</td>
             <td class="px-4 py-2">${s.teacher}</td>
@@ -3367,6 +3379,213 @@ const google = {
   }
 
   // ========================================================
+  // STUDENT EXPANDABLE ACCORDION ROW (ZERO-PII COMPLIANT)
+  // ========================================================
+  function buildStudentAccordionCardHtml(student) {
+    if (!student) return '';
+
+    // Student ID or Row fallback
+    const studentId = student.studentId || (student.rowNumber ? `(แถวที่ ${student.rowNumber})` : '-');
+
+    // Gender detection from name prefix
+    let gender = 'ไม่ระบุเพศ';
+    if (student.name) {
+      if (student.name.startsWith('เด็กชาย') || student.name.startsWith('นาย') || student.name.startsWith('ด.ช.')) gender = 'เพศชาย';
+      else if (student.name.startsWith('เด็กหญิง') || student.name.startsWith('นางสาว') || student.name.startsWith('ด.ญ.')) gender = 'เพศหญิง';
+    }
+
+    // Age calculation
+    const age = calculateAge(student.dateOfBirth, student);
+    const ageStr = student.age || (age !== null ? `${age} ปี` : 'ไม่ระบุอายุ');
+    const dobText = toThaiBuddhistDateString(student.dateOfBirth);
+
+    // Service badge
+    let svcText = 'รับบริการในศูนย์ / อื่นๆ';
+    let svcClass = 'bg-emerald-100 text-emerald-800';
+    if (student.serviceUnit === 1) {
+      svcText = 'รับบริการที่หน่วยบริการ';
+      svcClass = 'bg-cyan-100 text-cyan-800';
+    } else if (student.serviceAdjustHome === 1) {
+      svcText = 'รับบริการที่บ้าน (ปรับบ้าน)';
+      svcClass = 'bg-teal-100 text-teal-800';
+    } else if (student.serviceInCenter === 1) {
+      svcText = 'รับบริการที่ศูนย์';
+      svcClass = 'bg-emerald-100 text-emerald-800';
+    }
+    const svcBadge = `<span class="inline-block px-2 py-0.5 rounded text-[11px] font-bold ${svcClass}">${svcText}</span>`;
+
+    // Disability types
+    const disCard = getNormalizedDisability(student.disabilityByCard, true);
+    const disCardText = disCard !== 'ยังไม่มีบัตรคนพิการ' ? disCard : 'ยังไม่มีบัตรประจำตัวคนพิการ';
+
+    const disScreen = getNormalizedDisability(student.disabilityByScreening, false);
+    const disScreenText = disScreen !== 'ไม่ระบุ' ? disScreen : '-';
+
+    // Document Checklist Badges
+    const docBadgesHtml = `
+      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasDisabilityCard === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+        <i data-lucide="${student.hasDisabilityCard === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
+        <span>บัตรคนพิการ</span>
+      </span>
+      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasDisabilityCert === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+        <i data-lucide="${student.hasDisabilityCert === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
+        <span>เอกสารรับรอง</span>
+      </span>
+      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasEducationScreening === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+        <i data-lucide="${student.hasEducationScreening === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
+        <span>แบบคัดกรอง</span>
+      </span>
+    `;
+
+    // Special status badges (non-Thai, disabled later, sheets only)
+    let specialBadgesHtml = '';
+    if (student.nonThai === 1) {
+      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-rose-100 text-rose-800 rounded border border-rose-200">ไม่ใช่สัญชาติไทย</span>';
+    }
+    if (student.disabledLater === 1) {
+      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-800 rounded border border-amber-200">พิการภายหลัง</span>';
+    }
+    if (student.isSheetsOnly || student.category === 'sheets_only') {
+      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-purple-100 text-purple-800 rounded border border-purple-200">มีเฉพาะใน sheet</span>';
+    }
+    if (!specialBadgesHtml) {
+      specialBadgesHtml = '<span class="text-xs text-slate-400">สถานะทั่วไป</span>';
+    }
+
+    return `
+      <div class="p-3.5 sm:p-4 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 rounded-xl border border-emerald-200/70 shadow-sm text-left">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          <!-- Column 1: ข้อมูลทั่วไปและการศึกษา -->
+          <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-emerald-100/70">
+                <span class="font-bold text-xs text-emerald-950 flex items-center gap-1.5">
+                  <i data-lucide="user" class="w-3.5 h-3.5 text-emerald-700"></i>
+                  <span>ข้อมูลพื้นฐาน & การศึกษา</span>
+                </span>
+                <span class="text-[11px] font-mono px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded font-bold border border-emerald-100">รหัส ${studentId}</span>
+              </div>
+              <div class="space-y-1 text-xs text-slate-700 leading-relaxed">
+                <div><span class="text-slate-500">ชื่อ-สกุล:</span> <strong class="text-slate-900">${student.name || '-'}</strong></div>
+                <div><span class="text-slate-500">เพศ/อายุ:</span> <span class="font-medium text-slate-800">${gender} • ${ageStr}</span></div>
+                <div><span class="text-slate-500">วันเดือนปีเกิด:</span> <span class="text-slate-800">${dobText}</span></div>
+                <div><span class="text-slate-500">ห้องเรียน/หน่วยบริการ:</span> <span class="font-semibold text-emerald-850">${student.classroom || '-'}</span></div>
+                <div><span class="text-slate-500">ครูผู้รับผิดชอบ:</span> <span class="font-medium text-slate-800">${student.teacher || '-'}</span></div>
+                <div class="pt-1"><span class="text-slate-500 mr-1">ประเภทบริการ:</span> ${svcBadge}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 2: ความพิการและเอกสารสิทธิ์ -->
+          <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-100/70">
+                <i data-lucide="award" class="w-3.5 h-3.5 text-emerald-700"></i>
+                <span class="font-bold text-xs text-emerald-950">ความพิการ & เอกสารหลักฐาน</span>
+              </div>
+              <div class="space-y-2 text-xs text-slate-700">
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามบัตรคนพิการ):</div>
+                  <div class="font-semibold text-emerald-900 bg-emerald-50/70 px-2 py-1 rounded border border-emerald-100/60">${disCardText}</div>
+                </div>
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามแบบคัดกรองฯ):</div>
+                  <div class="font-medium text-slate-800 bg-slate-50 px-2 py-1 rounded border border-slate-100">${disScreenText}</div>
+                </div>
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-1">เอกสารหลักฐานทางการศึกษา:</div>
+                  <div class="flex flex-wrap gap-1">
+                    ${docBadgesHtml}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 3: ที่อยู่และสถานะ + ดู Modal -->
+          <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-100/70">
+                <i data-lucide="home" class="w-3.5 h-3.5 text-emerald-700"></i>
+                <span class="font-bold text-xs text-emerald-950">ที่อยู่ & สถานะพิเศษ</span>
+              </div>
+              <div class="space-y-2 text-xs text-slate-700">
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ที่อยู่ตามทะเบียนบ้าน:</div>
+                  <div class="text-slate-800 bg-slate-50 p-1.5 rounded border border-slate-100 text-xs leading-relaxed max-h-16 overflow-y-auto">${student.address || '-'}</div>
+                </div>
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-1">สถานะพิเศษ:</div>
+                  <div class="flex flex-wrap gap-1">
+                    ${specialBadgesHtml}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pt-2 mt-2 border-t border-emerald-100/70 flex items-center justify-between gap-2">
+              <span class="text-[10px] text-emerald-700 font-medium flex items-center gap-1">
+                <i data-lucide="shield-check" class="w-3 h-3"></i>
+                Zero-PII
+              </span>
+              <button type="button" onclick="openStudentProfileByRow(${student.rowNumber})" class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition inline-flex items-center gap-1">
+                <i data-lucide="id-card" class="w-3.5 h-3.5"></i>
+                <span>ดูแฟ้มประวัติเต็ม</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function toggleStudentAccordion(rowNumber) {
+    const subRow = $(`#studentSubRow_${rowNumber}`);
+    const chevron = $(`#studentAccordionChevron_${rowNumber}`);
+    if (subRow.hasClass('hidden')) {
+      subRow.removeClass('hidden');
+      chevron.addClass('rotate-180');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    } else {
+      subRow.addClass('hidden');
+      chevron.removeClass('rotate-180');
+    }
+  }
+
+  function toggleDrillDownAccordion(rowNumber) {
+    const subRow = $(`#drillDownSubRow_${rowNumber}`);
+    const chevron = $(`#drillDownChevron_${rowNumber}`);
+    if (subRow.hasClass('hidden')) {
+      subRow.removeClass('hidden');
+      chevron.addClass('rotate-180');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    } else {
+      subRow.addClass('hidden');
+      chevron.removeClass('rotate-180');
+    }
+  }
+
+  function expandAllStudents(isDrillDown = false) {
+    if (isDrillDown) {
+      $('.drilldown-accordion-subrow').removeClass('hidden');
+      $('[id^="drillDownChevron_"]').addClass('rotate-180');
+    } else {
+      $('.student-accordion-subrow').removeClass('hidden');
+      $('[id^="studentAccordionChevron_"]').addClass('rotate-180');
+    }
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  function collapseAllStudents(isDrillDown = false) {
+    if (isDrillDown) {
+      $('.drilldown-accordion-subrow').addClass('hidden');
+      $('[id^="drillDownChevron_"]').removeClass('rotate-180');
+    } else {
+      $('.student-accordion-subrow').addClass('hidden');
+      $('[id^="studentAccordionChevron_"]').removeClass('rotate-180');
+    }
+  }
+
+  // ========================================================
   // STUDENT PROFILE MODAL CONTROLLERS (ZERO-PII COMPLIANT)
   // ========================================================
   function openStudentProfileByRow(rowNumber, studentList = null) {
@@ -3479,6 +3698,8 @@ const google = {
 
   // Profile modal event listeners
   $(document).ready(function() {
+    $('#btnExpandAllStudents').click(function() { expandAllStudents(false); });
+    $('#btnCollapseAllStudents').click(function() { collapseAllStudents(false); });
     $('#btnCloseStudentProfileModal, #btnCloseStudentProfileModalBtn').click(closeStudentProfileModal);
     
     $('#studentProfileModal').click(function(e) {
@@ -3515,3 +3736,7 @@ const google = {
   // Expose to window for inline onclick handlers
   window.openStudentProfileByRow = openStudentProfileByRow;
   window.closeStudentProfileModal = closeStudentProfileModal;
+  window.toggleStudentAccordion = toggleStudentAccordion;
+  window.toggleDrillDownAccordion = toggleDrillDownAccordion;
+  window.expandAllStudents = expandAllStudents;
+  window.collapseAllStudents = collapseAllStudents;
