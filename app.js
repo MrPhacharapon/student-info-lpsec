@@ -12,20 +12,33 @@ const google = {
         return this;
       },
       _callApi: function(action, payload = null, getMethod = false) {
-        const url = getMethod ? `${CONFIG.API_URL}?action=${action}` + (payload ? `&url=${encodeURIComponent(payload)}` : '') : CONFIG.API_URL;
+        let url = CONFIG.API_URL;
+        const adminToken = (typeof state !== 'undefined' && state && state.adminToken) ? state.adminToken : undefined;
+
+        if (getMethod) {
+          url = `${CONFIG.API_URL}?action=${encodeURIComponent(action)}` + (payload ? `&url=${encodeURIComponent(payload)}` : '');
+          if (adminToken) {
+            url += `&token=${encodeURIComponent(adminToken)}`;
+          }
+        }
         
         let requestPayload = payload;
-        if (!getMethod && typeof state !== 'undefined' && state && state.adminToken) {
+        if (!getMethod && adminToken) {
           if (typeof requestPayload === 'object' && requestPayload !== null) {
-            requestPayload = Object.assign({ token: state.adminToken }, requestPayload);
+            requestPayload = Object.assign({ token: adminToken }, requestPayload);
           } else if (!requestPayload) {
-            requestPayload = { token: state.adminToken };
+            requestPayload = { token: adminToken };
           }
         }
 
-        const adminToken = (typeof state !== 'undefined' && state && state.adminToken) ? state.adminToken : undefined;
-        const options = getMethod ? { method: 'GET' } : {
+        const headers = { 'Content-Type': 'application/json' };
+        if (adminToken) {
+          headers['X-Admin-Token'] = adminToken;
+        }
+
+        const options = getMethod ? { method: 'GET', headers } : {
           method: 'POST',
+          headers,
           body: JSON.stringify({ action, payload: requestPayload, token: adminToken })
         };
         
@@ -199,6 +212,7 @@ function saveFieldVisibility(vis) {
   });
 
   const STUDENT_CACHE_KEY = 'LPSEC_STUDENT_DATA_CACHE';
+  const STUDENT_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes TTL for client storage
   let isDataLoadedFromCache = false;
 
   // Try to restore student data instantly from browser localStorage (< 0.1s)
@@ -208,7 +222,12 @@ function saveFieldVisibility(vis) {
       const cachedStr = localStorage.getItem(STUDENT_CACHE_KEY);
       if (!cachedStr) return false;
 
-      const cached = JSON.parse(cachedStr);
+      const cachedObj = JSON.parse(cachedStr);
+      // Support envelope format { timestamp, data } or legacy raw format { students, config }
+      const cached = (cachedObj && cachedObj.data) ? cachedObj.data : cachedObj;
+      const cachedTimestamp = (cachedObj && cachedObj.timestamp) ? cachedObj.timestamp : null;
+      const isExpired = cachedTimestamp ? (Date.now() - cachedTimestamp > STUDENT_CACHE_TTL_MS) : false;
+
       if (cached && Array.isArray(cached.students) && cached.students.length > 0) {
         isDataLoadedFromCache = true;
         // Instantly populate and render from cache!
@@ -216,7 +235,7 @@ function saveFieldVisibility(vis) {
         
         // Show subtle background sync badge
         $('#badgeBackgroundSync').removeClass('hidden').show();
-        $('#badgeBackgroundSyncText').text('กำลังซิงค์ข้อมูลล่าสุด...');
+        $('#badgeBackgroundSyncText').text(isExpired ? 'แคชเกิน 15 นาที กำลังอัปเดต...' : 'กำลังซิงค์ข้อมูลล่าสุด...');
         $('#badgeBackgroundSync i').addClass('animate-spin').attr('data-lucide', 'refresh-cw');
         if (typeof lucide !== 'undefined') lucide.createIcons();
         return true;
@@ -337,11 +356,16 @@ function saveFieldVisibility(vis) {
     state.allStudents = response.students || [];
     state.appConfig = response.config || {};
 
-    // Save to browser cache for future instant loads
+    // Save to browser cache with envelope and timestamp for future instant loads
     if (!fromCache) {
       try {
         if (typeof localStorage !== 'undefined') {
-          localStorage.setItem(STUDENT_CACHE_KEY, JSON.stringify(response));
+          const envelope = {
+            timestamp: Date.now(),
+            version: 1,
+            data: response
+          };
+          localStorage.setItem(STUDENT_CACHE_KEY, JSON.stringify(envelope));
         }
       } catch (e) {
         console.warn('Error saving student cache:', e);
@@ -890,12 +914,18 @@ function saveFieldVisibility(vis) {
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.removeItem('ADMIN_SESSION_TOKEN');
     }
+    // Clean up sensitive SET files from IndexedDB upon logout to protect PII
+    if (typeof clearAllSetFilesFromLocalDB === 'function') {
+      clearAllSetFilesFromLocalDB();
+    }
+    // Reload public sanitized data from gateway
+    loadData();
     renderStudentTable();
     $('.nav-link[data-section="dashboard"]').trigger('click');
     Swal.fire({
       icon: 'success',
       title: 'ออกจากระบบสำเร็จ',
-      text: 'ยกเลิกสิทธิ์ Admin เรียบร้อยแล้ว',
+      text: 'ยกเลิกสิทธิ์ Admin และล้างแคชข้อมูลลับเรียบร้อยแล้ว',
       timer: 1500,
       showConfirmButton: false
     });

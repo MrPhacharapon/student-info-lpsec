@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const gatewayHandler = require('./api/students.js');
 
 const port = 3000;
 const mimeTypes = {
@@ -14,8 +15,39 @@ const mimeTypes = {
   '.svg': 'image/svg+xml',
 };
 
-const server = http.createServer((req, res) => {
-  let filePath = req.url === '/' ? '/index.html' : req.url;
+const server = http.createServer(async (req, res) => {
+  const reqUrl = new URL(req.url, `http://localhost:${port}`);
+
+  // Route API requests to api/students.js (Vercel Edge Simulator)
+  if (reqUrl.pathname === '/api/students' || reqUrl.pathname.startsWith('/api/students')) {
+    // Shim Vercel helpers on req and res
+    req.query = Object.fromEntries(reqUrl.searchParams);
+    res.status = function(code) { this.statusCode = code; return this; };
+    res.json = function(data) {
+      this.setHeader('Content-Type', 'application/json');
+      this.end(JSON.stringify(data));
+      return this;
+    };
+
+    if (req.method === 'POST') {
+      let bodyData = '';
+      req.on('data', chunk => { bodyData += chunk; });
+      req.on('end', async () => {
+        try {
+          req.body = bodyData ? JSON.parse(bodyData) : {};
+        } catch (e) {
+          req.body = {};
+        }
+        await gatewayHandler(req, res);
+      });
+      return;
+    }
+
+    await gatewayHandler(req, res);
+    return;
+  }
+
+  let filePath = req.url === '/' ? '/index.html' : reqUrl.pathname;
   filePath = path.join(__dirname, filePath);
 
   const extname = String(path.extname(filePath)).toLowerCase();
@@ -42,7 +74,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(port, () => {
   console.log(`\n==================================================`);
-  console.log(`🚀 [Static Dev Server] is running at:`);
+  console.log(`🚀 [Static Dev Server + Edge Gateway] is running at:`);
   console.log(`   👉 http://localhost:${port}`);
   console.log(`==================================================\n`);
   console.log(`Press Ctrl+C to stop the server.`);
