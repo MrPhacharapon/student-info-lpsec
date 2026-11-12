@@ -4,6 +4,11 @@
   <!-- Native DOM Error Catcher -->
   <script>
     window.onerror = function(msg, url, line, col, error) {
+      // Filter out generic cross-origin "Script error." caused by browser extensions or CDN without stack
+      if (msg === 'Script error.' && (!url || url === '' || line === 0)) {
+        console.warn('Suppressed cross-origin Script error from browser extension/CDN:', msg);
+        return true;
+      }
       var errDiv = document.createElement('div');
       errDiv.style.position = 'fixed'; errDiv.style.top = '0'; errDiv.style.left = '0';
       errDiv.style.width = '100%'; errDiv.style.background = '#dc2626'; errDiv.style.color = 'white';
@@ -265,7 +270,13 @@
         </div>
         <div>
           <h2 id="topBarTitle" class="text-xl font-bold text-emerald-900 leading-tight">สารสนเทศนักเรียน ศูนย์การศึกษาพิเศษ ประจำจังหวัดลำปาง</h2>
-          <p id="textReportDate" class="text-sm text-cyan-800 font-medium mt-0.5">ข้อมูล ณ วันที่ 4 สิงหาคม พ.ศ. 2569</p>
+          <div class="flex items-center gap-2 mt-0.5 flex-wrap">
+            <p id="textReportDate" class="text-sm text-cyan-800 font-medium">ข้อมูล ณ วันที่ 4 สิงหาคม พ.ศ. 2569</p>
+            <span id="badgeBackgroundSync" class="hidden inline-flex items-center gap-1.5 text-[11px] text-emerald-800 bg-emerald-100/80 border border-emerald-300/70 px-2.5 py-0.5 rounded-full font-medium transition-all shadow-xs">
+              <i data-lucide="refresh-cw" class="w-3 h-3 text-emerald-700 animate-spin"></i>
+              <span id="badgeBackgroundSyncText">กำลังซิงค์ข้อมูลล่าสุด...</span>
+            </span>
+          </div>
         </div>
       </div>
 
