@@ -198,26 +198,59 @@ function saveFieldVisibility(vis) {
     initApp();
   });
 
-  function initApp() {
-    showLoading(true);
-    
-    // Register the Chart.js DataLabels plugin globally
-    Chart.register(ChartDataLabels);
+  const STUDENT_CACHE_KEY = 'LPSEC_STUDENT_DATA_CACHE';
+  let isDataLoadedFromCache = false;
 
-    // Set Chart.js Defaults for larger readable text
-    Chart.defaults.font.size = 15;
-    Chart.defaults.font.family = "'Sarabun', sans-serif";
-    
-    // Bind General Event Listeners
+  // Try to restore student data instantly from browser localStorage (< 0.1s)
+  function tryRestoreStudentCache() {
+    try {
+      if (typeof localStorage === 'undefined') return false;
+      const cachedStr = localStorage.getItem(STUDENT_CACHE_KEY);
+      if (!cachedStr) return false;
+
+      const cached = JSON.parse(cachedStr);
+      if (cached && Array.isArray(cached.students) && cached.students.length > 0) {
+        isDataLoadedFromCache = true;
+        // Instantly populate and render from cache!
+        onDataLoadSuccess(cached, true);
+        
+        // Show subtle background sync badge
+        $('#badgeBackgroundSync').removeClass('hidden').show();
+        $('#badgeBackgroundSyncText').text('กำลังซิงค์ข้อมูลล่าสุด...');
+        $('#badgeBackgroundSync i').addClass('animate-spin').attr('data-lucide', 'refresh-cw');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        return true;
+      }
+    } catch (e) {
+      console.warn('Error restoring student cache:', e);
+    }
+    return false;
+  }
+
+  function initApp() {
+    // 1. Register Chart.js DataLabels plugin & defaults FIRST before any rendering
+    if (typeof Chart !== 'undefined') {
+      if (typeof ChartDataLabels !== 'undefined') {
+        Chart.register(ChartDataLabels);
+      }
+      Chart.defaults.font.size = 15;
+      Chart.defaults.font.family = "'Sarabun', sans-serif";
+    }
+
+    // 2. Setup Listeners, Drag & Drop, and Scrollbars
     setupEventListeners();
-    
-    // Setup Drag & Drop Handlers
     setupDragAndDrop();
-    
-    // Setup Top Scrollbar Sync
     setupScrollbarSync();
-    
-    // Load data from Google Apps Script
+
+    // 3. Try to restore and render from local cache (Instant load in ~0.05s!)
+    const hasCache = tryRestoreStudentCache();
+
+    // 4. Only show full-screen blocking loader if we have NO cache at all (First visit)
+    if (!hasCache) {
+      showLoading(true);
+    }
+
+    // 5. Load fresh data from Google Apps Script / Edge API
     loadData();
   }
 
@@ -276,6 +309,17 @@ function saveFieldVisibility(vis) {
 
   function onDataLoadFailure(error) {
     showLoading(false);
+    if (isDataLoadedFromCache) {
+      // If we already have cache rendered, don't disrupt the user with a blocking modal error
+      console.warn('Background sync failed:', error.message);
+      $('#badgeBackgroundSyncText').text('ใช้ออฟไลน์/แคชเดิม');
+      $('#badgeBackgroundSync i').removeClass('animate-spin').attr('data-lucide', 'wifi-off');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+      setTimeout(() => {
+        $('#badgeBackgroundSync').fadeOut(800);
+      }, 4000);
+      return;
+    }
     Swal.fire({
       icon: 'error',
       title: 'การเชื่อมต่อผิดพลาด',
@@ -284,9 +328,25 @@ function saveFieldVisibility(vis) {
     });
   }
 
-  function onDataLoadSuccess(response) {
+  function onDataLoadSuccess(response, fromCache = false) {
+    if (!response || !response.students) {
+      if (!isDataLoadedFromCache) showLoading(false);
+      return;
+    }
+
     state.allStudents = response.students || [];
     state.appConfig = response.config || {};
+
+    // Save to browser cache for future instant loads
+    if (!fromCache) {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(STUDENT_CACHE_KEY, JSON.stringify(response));
+        }
+      } catch (e) {
+        console.warn('Error saving student cache:', e);
+      }
+    }
     
     // Parse Dynamic Column Order
     if (state.appConfig.columnOrder) {
@@ -319,6 +379,16 @@ function saveFieldVisibility(vis) {
     applyFilters();
     renderDashboard();
     
+    // If this was a background sync completion
+    if (!fromCache && isDataLoadedFromCache) {
+      $('#badgeBackgroundSyncText').text('ข้อมูลล่าสุด');
+      $('#badgeBackgroundSync i').removeClass('animate-spin').attr('data-lucide', 'check-circle-2');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+      setTimeout(() => {
+        $('#badgeBackgroundSync').fadeOut(600);
+      }, 2500);
+    }
+
     showLoading(false);
   }
 
@@ -1873,12 +1943,19 @@ function saveFieldVisibility(vis) {
     $('#statAgeUnknown').text(countAgeUnknown);
     $('#containerAgeUnknown').toggleClass('hidden', countAgeUnknown === 0);
 
-    // Destroy existing chart instances to re-render fresh
-    Object.keys(state.dashboardCharts).forEach(key => {
-      if (state.dashboardCharts[key]) {
-        state.dashboardCharts[key].destroy();
+    // Destroy existing chart instances cleanly using Chart.getChart to prevent canvas reuse error
+    ['chartDisabilityCard', 'chartDisabilityScreen', 'chartSpecificAges'].forEach(canvasId => {
+      if (typeof Chart !== 'undefined' && Chart.getChart) {
+        const existingChart = Chart.getChart(canvasId);
+        if (existingChart) existingChart.destroy();
       }
     });
+    Object.keys(state.dashboardCharts).forEach(key => {
+      if (state.dashboardCharts[key]) {
+        try { state.dashboardCharts[key].destroy(); } catch (e) {}
+      }
+    });
+    state.dashboardCharts = {};
 
     // Build Chart 3: Disability Type - ID Card (Horizontal Bar Chart)
     const cardLabels = Object.keys(disCardCounts).sort((a,b) => disCardCounts[b] - disCardCounts[a]);
