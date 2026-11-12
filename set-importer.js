@@ -134,8 +134,9 @@
    * Handles 13-digit Thai IDs, G-codes, and safely sanitizes malformed values without leaking raw HTML/XSS
    */
   function maskCitizenId(idStr) {
-    if (idStr === undefined || idStr === null || idStr === '') return '-';
+    if (idStr === undefined || idStr === null || idStr === '' || idStr === '-') return '-';
     const clean = cleanCitizenId(idStr);
+    if (!clean || clean === '0000000000000' || clean === '-') return '-';
     if (clean && clean.length === 13 && /^\d{13}$/.test(clean)) {
       return `${clean.substr(0, 1)}-${clean.substr(1, 4)}-xxxxx-${clean.substr(10, 2)}-${clean.substr(12, 1)}`;
     }
@@ -148,7 +149,7 @@
       return `${clean.substr(0, 2)}***${clean.substr(clean.length - 2)}`;
     }
     // Malformed or non-numeric string: return safe label
-    return '(รูปแบบไม่ถูกต้อง)';
+    return '-';
   }
 
   /**
@@ -1269,7 +1270,7 @@
         sheetsOnly.push({
           sheet: student,
           status: 'sheets_only',
-          description: 'มีเฉพาะใน Google Sheets แต่ไม่พบในทะเบียน SET (ต้องตรวจสอบและไม่แสดงต่อ Public)'
+          description: 'มีเฉพาะใน Google Sheets แต่ไม่พบในทะเบียน SET (ไม่พบในไฟล์ SET ที่นำเข้า)'
         });
       }
     });

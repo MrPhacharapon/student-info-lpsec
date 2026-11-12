@@ -118,6 +118,8 @@ const google = {
   const state = {
     adminToken: (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('ADMIN_SESSION_TOKEN') : null),
     allStudents: [],
+    currentProfileStudents: [],
+    currentProfileIndex: -1,
     filteredStudents: [],
     classrooms: [],
     teachers: [],
@@ -407,6 +409,26 @@ const google = {
           title: 'เข้าสู่แผงควบคุมระบบ (Admin)',
           text: 'กรุณากรอกรหัสผ่านเพื่อเข้าใช้งานตั้งค่าระบบ',
           input: 'password',
+          inputValue: '',
+          inputAttributes: {
+            autocomplete: 'new-password',
+            autocorrect: 'off',
+            autocapitalize: 'off',
+            spellcheck: 'false'
+          },
+          didOpen: () => {
+            const input = Swal.getInput();
+            if (input) {
+              input.value = '';
+              input.setAttribute('autocomplete', 'new-password');
+              input.setAttribute('readonly', 'readonly');
+              setTimeout(() => {
+                input.removeAttribute('readonly');
+                input.value = '';
+                input.focus();
+              }, 60);
+            }
+          },
           inputPlaceholder: 'กรอกรหัสผ่านผู้ดูแลระบบ...',
           showCancelButton: true,
           confirmButtonText: 'เข้าสู่ระบบ',
@@ -466,13 +488,6 @@ const google = {
       icon.toggleClass('rotate-180');
     });
 
-    // Admin toggle switches: show/hide menu items
-    $('#toggleNavStudents').on('change', function() {
-      $('#navStudents').toggle(this.checked);
-    });
-    $('#toggleNavPivot').on('change', function() {
-      $('#navPivot').toggle(this.checked);
-    });
 
     // Text Search
     $('#searchName').on('input', function() {
@@ -571,34 +586,11 @@ const google = {
       });
     });
 
+    // Admin Fetch Tabs Helper moved to outer scope
+
     // Admin Fetch Tabs Button
     $('#btnAdminFetchTabs').click(function() {
-      const url = $('#adminSpreadsheetUrl').val();
-      if (!url) {
-        Swal.fire('คำเตือน', 'กรุณากรอกลิงก์ Google Sheet', 'warning');
-        return;
-      }
-      
-      showLoading(true);
-      google.script.run
-        .withSuccessHandler(function(res) {
-          showLoading(false);
-          if (res.success) {
-            const select = $('#adminSheetTabSelect').empty();
-            res.tabs.forEach(tab => {
-              select.append(`<option value="${tab.name}">${tab.name} (${tab.id})</option>`);
-            });
-            select.trigger('change');
-            Swal.fire('สำเร็จ', 'ดึงข้อมูลแผ่นงานเรียบร้อยแล้ว กรุณาเลือกแผ่นงานที่ต้องการด้านล่าง', 'success');
-          } else {
-            Swal.fire('ข้อผิดพลาด', 'ไม่สามารถเชื่อมต่อชีตได้: ' + res.message, 'error');
-          }
-        })
-        .withFailureHandler(function(err) {
-          showLoading(false);
-          Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
-        })
-        .getSheetTabsFromUrl(url);
+      fetchAdminSheetTabs(false);
     });
 
     // Admin Save Settings Button
@@ -725,19 +717,69 @@ const google = {
     const titleEl = $('#topBarTitle');
     if (targetSection === 'dashboard') {
       titleEl.text('สารสนเทศนักเรียน ศูนย์การศึกษาพิเศษ ประจำจังหวัดลำปาง');
-      // Hide filter panel when in dashboard (overview) mode
-      $('#filterPanel').addClass('hidden');
-      $('#iconAdvancedSearch').removeClass('rotate-180');
+      // ภาพ 2: หน้าภาพรวม -> ไม่ต้องแสดง ตัวกรองหลายชั้น
+      $('#btnToggleAdvancedSearch, #filterPanel').addClass('hidden');
       renderDashboard();
     } else if (targetSection === 'students') {
-      titleEl.text('แฟ้มรายชื่อนักเรียน');
+      // ภาพ 3: แฟ้มรายชื่อนักเรียน -> ข้อมูลนักเรียนรายบุคคล
+      titleEl.text('ข้อมูลนักเรียนรายบุคคล');
+      // แสดงตัวกรองหลายชั้นในหน้าข้อมูลนักเรียนรายบุคคล
+      $('#btnToggleAdvancedSearch, #filterPanel').removeClass('hidden');
       renderStudentTable();
     } else if (targetSection === 'pivot') {
       titleEl.text('ตารางวิเคราะห์ความสัมพันธ์ของข้อมูล');
+      $('#btnToggleAdvancedSearch, #filterPanel').addClass('hidden');
       renderPivotTable();
     } else if (targetSection === 'admin') {
       titleEl.text('ตั้งค่าระบบสำหรับผู้ดูแล (Admin)');
+      $('#btnToggleAdvancedSearch, #filterPanel').addClass('hidden');
+      if (typeof restoreSetFilesFromLocalDB === 'function') {
+        restoreSetFilesFromLocalDB(true);
+      }
     }
+  }
+
+  // Admin Fetch Tabs Helper (Supports both automatic background fetch and manual button click)
+  function fetchAdminSheetTabs(isAuto = false) {
+    const url = $('#adminSpreadsheetUrl').val();
+    if (!url) {
+      if (!isAuto) Swal.fire('คำเตือน', 'กรุณากรอกลิงก์ Google Sheet', 'warning');
+      return;
+    }
+    
+    const currentSelectedSheet = (state.appConfig && state.appConfig.sheetName) || $('#adminSheetTabSelect').val();
+    
+    if (!isAuto) showLoading(true);
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!isAuto) showLoading(false);
+        const isSuccess = res && (res.success || res.status === 'success');
+        const tabs = res && (res.tabs || (res.data && res.data.tabs));
+        if (isSuccess && tabs && tabs.length > 0) {
+          const select = $('#adminSheetTabSelect').empty();
+          tabs.forEach(tab => {
+            const isSelected = (tab.name === currentSelectedSheet) ? 'selected' : '';
+            select.append(`<option value="${tab.name}" ${isSelected}>${tab.name} (${tab.id})</option>`);
+          });
+          if (currentSelectedSheet) {
+            select.val(currentSelectedSheet);
+          }
+          if (!isAuto) {
+            Swal.fire('สำเร็จ', 'ดึงข้อมูลแผ่นงานเรียบร้อยแล้ว กรุณาเลือกแผ่นงานที่ต้องการด้านล่าง', 'success');
+          }
+        } else {
+          if (!isAuto) {
+            Swal.fire('ข้อผิดพลาด', 'ไม่สามารถเชื่อมต่อชีตได้: ' + ((res && res.message) || 'ไม่พบรายชื่อแผ่นงาน'), 'error');
+          }
+        }
+      })
+      .withFailureHandler(function(err) {
+        if (!isAuto) {
+          showLoading(false);
+          Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
+        }
+      })
+      .getSheetTabsFromUrl(url);
   }
 
   // Admin settings panel initialization
@@ -761,6 +803,8 @@ const google = {
       
       const tabSelect = $('#adminSheetTabSelect').empty();
       tabSelect.append(`<option value="${state.appConfig.sheetName}">${state.appConfig.sheetName}</option>`);
+      // Auto-fetch all sheet tabs in the background upon opening admin panel
+      fetchAdminSheetTabs(true);
       
       if (state.appConfig.rawReportDate) {
         const parts = state.appConfig.rawReportDate.split('/');
@@ -855,9 +899,12 @@ const google = {
     const statusLater = $('#filterStatusLater').is(':checked');
 
     state.filteredStudents = state.allStudents.filter(s => {
-      // 1. Search Name
-      if (searchVal && s.name.toLowerCase().indexOf(searchVal) === -1) {
-        return false;
+      // 1. Search Name (supports partial words, multi-word matching, vowels & accents)
+      if (searchVal) {
+        const terms = searchVal.split(/\s+/).filter(Boolean);
+        const nameLower = (s.name || '').toLowerCase();
+        const allTermsMatch = terms.every(term => nameLower.indexOf(term) !== -1);
+        if (!allTermsMatch) return false;
       }
       // 2. Classroom dropdown
       if (classroomVal && s.classroom !== classroomVal) {
@@ -931,6 +978,21 @@ const google = {
     // Update Stats badge
     $('#filteredCountBadge').text(state.filteredStudents.length);
     $('#totalCountBadge').text(state.allStudents.length);
+
+    // Multi-tier Live Filtering & Real-Time Search:
+    // Auto-display matching students in lifted #chartDrillDownContainer right below counter cards
+    const hasActiveFilter = Boolean(
+      searchVal || classroomVal || teacherVal || disCardVal || disScrVal || 
+      ageRangeVal || ageYearVal || svcInCenter || svcSvcUnit || svcHome || 
+      docCard || docCert || docScreen || statusNonThai || statusLater
+    );
+    if (hasActiveFilter) {
+      state.currentDrillDownType = 'total';
+      showDrillDownDetails('total', '', false);
+    } else if (state.currentDrillDownType === 'total') {
+      $('#chartDrillDownContainer').addClass('hidden');
+      state.currentDrillDownType = null;
+    }
   }
 
   const COLUMN_DEFINITIONS = {
@@ -945,13 +1007,15 @@ const google = {
 
   function renderTableHeader() {
     const thead = $('#studentsSection table thead tr').empty();
-    state.columnOrder.forEach(colId => {
-      const def = COLUMN_DEFINITIONS[colId];
-      if (def) {
-        thead.append(`<th class="px-6 py-4 text-emerald-800 text-sm ${def.class}">${def.label}</th>`);
-      }
-    });
-    thead.append(`<th class="px-6 py-4 text-emerald-900 text-sm text-right whitespace-nowrap">จัดการ</th>`);
+    thead.append(`
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ชื่อ-สกุล</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ประเภทความพิการ</th>
+      <th class="px-1.5 py-2 text-emerald-850 font-semibold text-xs text-center">อายุ (ปี)</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ห้องเรียน/หน่วยบริการ</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ประเภทการบริการ</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs">ครูผู้รับผิดชอบ</th>
+      <th class="px-2.5 py-2 text-emerald-850 font-semibold text-xs text-center whitespace-nowrap">ดูรายละเอียด</th>
+    `);
   }
 
   function getColumnCellHtml(colId, student, svcText, docBadges, dobText, statusLabels, displayDis) {
@@ -975,94 +1039,141 @@ const google = {
     }
   }
 
-  // Render Table of students
+  // Render Table of students (Matching Image 3 columns, compact text-xs, conflict warning, no edit/delete buttons)
   function renderStudentTable() {
     renderTableHeader();
     const tbody = $('#studentTableBody').empty();
     
     if (state.filteredStudents.length === 0) {
-      tbody.append(`
-        <tr>
-          <td colspan="${state.columnOrder.length + 1}" class="px-6 py-10 text-center text-gray-500 font-medium bg-white/30">
-            <div class="flex flex-col items-center justify-center gap-2">
-              <i data-lucide="users" class="w-10 h-10 text-gray-400"></i>
-              <span>ไม่พบข้อมูลนักเรียนที่ตรงตามเงื่อนไข</span>
-            </div>
-          </td>
-        </tr>
-      `);
+      const searchVal = ($('#searchName').val() || '').trim();
+      const classroomVal = $('#filterClassroom').val();
+      const teacherVal = $('#filterTeacher').val();
+      const disCardVal = $('#filterDisabilityCard').val();
+      const disScrVal = $('#filterDisabilityScreen').val();
+      
+      let conflictHtml = '';
+      if (searchVal) {
+        // Search if the student exists in allStudents without other conflicting filters
+        const matchingKids = state.allStudents.filter(s => {
+          const terms = searchVal.toLowerCase().split(/\s+/).filter(Boolean);
+          const nameLower = (s.name || '').toLowerCase();
+          return terms.every(t => nameLower.includes(t));
+        });
+
+        if (matchingKids.length > 0) {
+          const kid = matchingKids[0];
+          let conflictReasons = [];
+          if (classroomVal && kid.classroom !== classroomVal) {
+            conflictReasons.push(`ห้องเรียนจริงคือ <strong>"${kid.classroom || '-'}"</strong> (แต่เลือกตัวกรองเป็น "${classroomVal}")`);
+          }
+          if (teacherVal && kid.teacher !== teacherVal) {
+            conflictReasons.push(`ครูผู้รับผิดชอบจริงคือ <strong>"${kid.teacher || '-'}"</strong> (แต่เลือกตัวกรองเป็น "${teacherVal}")`);
+          }
+          if (disCardVal && getNormalizedDisability(kid.disabilityByCard, true) !== disCardVal) {
+            conflictReasons.push(`ความพิการตามบัตรจริงคือ <strong>"${getNormalizedDisability(kid.disabilityByCard, true)}"</strong>`);
+          }
+          if (disScrVal && getNormalizedDisability(kid.disabilityByScreening, false) !== disScrVal) {
+            conflictReasons.push(`ความพิการตามคัดกรองจริงคือ <strong>"${getNormalizedDisability(kid.disabilityByScreening, false)}"</strong>`);
+          }
+
+          const reasonText = conflictReasons.length > 0 
+            ? `<div class="mt-1 text-xs text-amber-800 leading-relaxed">${conflictReasons.join(' • ')}</div>` 
+            : `<div class="mt-1 text-xs text-amber-800 leading-relaxed">พบ ${kid.name} อยู่ในห้องเรียน <strong>"${kid.classroom || '-'}"</strong> (ครู: ${kid.teacher || '-'})</div>`;
+
+          conflictHtml = `
+            <tr>
+              <td colspan="7" class="p-4 sm:p-6 text-center bg-amber-50/80 border border-amber-200/80 rounded-2xl">
+                <div class="flex flex-col items-center justify-center gap-2 text-amber-900 max-w-xl mx-auto">
+                  <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 shadow-xs">
+                    <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                  </div>
+                  <div class="font-bold text-sm text-amber-950">
+                    พบข้อมูลนักเรียนในระบบ แต่เงื่อนไขตัวกรองไม่สัมพันธ์กัน
+                  </div>
+                  <div class="text-xs text-slate-700">
+                    พบชื่อ <strong>"${kid.name}"</strong> ในฐานข้อมูล
+                  </div>
+                  ${reasonText}
+                  <button type="button" onclick="clearFiltersExceptSearch()" class="mt-2 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs transition flex items-center gap-1.5">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    <span>คลิกเพื่อล้างตัวกรองอื่น และแสดงข้อมูลนักเรียนทันที</span>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }
+      }
+
+      if (!conflictHtml) {
+        conflictHtml = `
+          <tr>
+            <td colspan="7" class="px-4 py-8 text-center text-gray-500 font-medium bg-white/30">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <i data-lucide="users" class="w-8 h-8 text-gray-400"></i>
+                <span>ไม่พบข้อมูลนักเรียนที่ตรงตามเงื่อนไข</span>
+                <span class="text-xs text-gray-400">ลองตรวจสอบตัวสะกดชื่อ หรือกดปุ่ม "ล้างตัวกรอง" ที่เมนูด้านซ้าย</span>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+
+      tbody.append(conflictHtml);
       lucide.createIcons();
       return;
     }
 
-    state.filteredStudents.forEach((student, index) => {
-      // Determine service text
+    state.filteredStudents.forEach((student) => {
+      // 1. Service badges
       let svcText = '';
-      if (student.serviceInCenter) svcText += '<span class="px-2 py-1 text-xs bg-emerald-100 text-emerald-800 rounded-full font-medium mr-1">รับบริการที่ศูนย์</span>';
-      if (student.serviceUnit) svcText += '<span class="px-2 py-1 text-xs bg-cyan-100 text-cyan-800 rounded-full font-medium mr-1">รับบริการที่หน่วยบริการ</span>';
-      if (student.serviceAdjustHome) svcText += '<span class="px-2 py-1 text-xs bg-teal-100 text-teal-800 rounded-full font-medium">รับบริการที่บ้าน</span>';
+      if (student.serviceInCenter) svcText += '<span class="px-2 py-0.5 text-[10px] bg-emerald-100 text-emerald-800 rounded-full mr-1 whitespace-nowrap">รับบริการที่ศูนย์</span>';
+      if (student.serviceUnit) svcText += '<span class="px-2 py-0.5 text-[10px] bg-cyan-100 text-cyan-800 rounded-full mr-1 whitespace-nowrap">รับบริการที่หน่วยบริการ</span>';
+      if (student.serviceAdjustHome) svcText += '<span class="px-2 py-0.5 text-[10px] bg-teal-100 text-teal-800 rounded-full whitespace-nowrap">รับบริการที่บ้าน</span>';
+      if (!svcText) svcText = '-';
 
-      // Document completeness badges
-      let docBadges = '';
-      docBadges += student.hasDisabilityCard ? 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-700 text-xs font-semibold mr-1" title="มีบัตรประจำตัวคนพิการ">บ</span>' : 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-xs font-semibold mr-1" title="ไม่มีบัตรประจำตัวคนพิการ">-</span>';
-      
-      docBadges += student.hasDisabilityCert ? 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold mr-1" title="มีเอกสารรับรองความพิการ">ใบ</span>' : 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-xs font-semibold mr-1" title="ไม่มีเอกสารรับรองความพิการ">-</span>';
-      
-      docBadges += student.hasEducationScreening ? 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-cyan-100 text-cyan-700 text-xs font-semibold" title="มีแบบคัดกรองทางการศึกษา">ค</span>' : 
-        '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-xs font-semibold" title="ไม่มีแบบคัดกรองทางการศึกษา">-</span>';
+      // 2. Normalized Disability (Matching Image 3)
+      const displayDis = getNormalizedDisability(student.disabilityByCard, true) !== 'ยังไม่มีบัตรคนพิการ' 
+        ? getNormalizedDisability(student.disabilityByCard, true) 
+        : (getNormalizedDisability(student.disabilityByScreening, false) !== 'ไม่ระบุ' 
+           ? getNormalizedDisability(student.disabilityByScreening, false) 
+           : '-');
 
-      // Status labels (Non-Thai or Disabled later)
-      let statusLabels = '';
-      if (student.nonThai) {
-        statusLabels += '<span class="px-2 py-0.5 text-xs bg-red-100 text-red-800 rounded-md font-medium mr-1">ไม่ใช่สัญชาติไทย</span>';
-      }
-      if (student.disabledLater) {
-        statusLabels += '<span class="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded-md font-medium">พิการภายหลัง</span>';
-      }
-      if (!statusLabels) statusLabels = '<span class="text-gray-400">-</span>';
+      // Find matched record from Excel SET if available
+      const setRec = (typeof findMatchedSetRecord === 'function') ? findMatchedSetRecord(student) : null;
+      const displayName = (setRec && setRec.fullName) ? setRec.fullName : student.name;
 
-      const displayDis = getNormalizedDisability(student.disabilityByScreening, false) !== 'ไม่ระบุ' 
-        ? getNormalizedDisability(student.disabilityByScreening, false) 
-        : '-';
+      // 3. Age (Prioritize Excel SET, fallback to Google Sheets)
+      const ageText = (setRec && setRec.age)
+        ? (setRec.age.includes('ปี') ? setRec.age : setRec.age + ' ปี')
+        : (student.age || (calculateAge(student.dateOfBirth, student) !== null ? calculateAge(student.dateOfBirth, student) + ' ปี' : '-'));
 
-      const age = calculateAge(student.dateOfBirth, student);
-      const dobText = toThaiBuddhistDateString(student.dateOfBirth) + (student.age ? ` (${student.age})` : (age !== null ? ` (${age} ปี)` : ''));
+      // 4. Action button: ONLY "รายละเอียด" (NO edit, NO delete buttons)
+      const actionButtons = `
+        <button type="button" onclick="toggleStudentAccordion(${student.rowNumber})" class="p-1 px-2.5 text-xs text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition font-semibold inline-flex items-center gap-1 shadow-xs" title="คลิกเพื่อคลี่ดูข้อมูล">
+          <i data-lucide="chevron-down" id="studentAccordionChevron_${student.rowNumber}" class="w-3.5 h-3.5 text-emerald-700 transition-transform duration-200"></i>
+          <span>รายละเอียด</span>
+        </button>
+      `;
 
-      let cellsHtml = '';
-      state.columnOrder.forEach(colId => {
-        cellsHtml += getColumnCellHtml(colId, student, svcText, docBadges, dobText, statusLabels, displayDis);
-      });
-
-      let actionButtons = '';
-      if (state.adminToken) {
-        actionButtons = `
-          <button onclick="editStudentByRow(${student.rowNumber})" class="p-2 text-emerald-700 hover:bg-emerald-500/10 rounded-lg transition" title="แก้ไข">
-            <i data-lucide="edit-3" class="w-4 h-4"></i>
-          </button>
-          <button onclick="deleteStudentByRow(${student.rowNumber}, '${student.name.replace(/'/g, "\\'")}', '${(student.studentId || '').replace(/'/g, "\\'")}')" class="p-2 text-red-600 hover:bg-red-500/10 rounded-lg transition" title="ลบ">
-            <i data-lucide="trash-2" class="w-4 h-4"></i>
-          </button>
-        `;
-      } else {
-        actionButtons = `
-          <span class="inline-flex items-center gap-1 text-xs text-gray-400 bg-gray-100/80 px-2 py-1 rounded-md" title="เข้าสู่ระบบ Admin เพื่อแก้ไขหรือลบ">
-            <i data-lucide="lock" class="w-3.5 h-3.5"></i> ล็อก
-          </span>
-        `;
-      }
-
+      const cardHtml = buildStudentAccordionCardHtml(student);
       const rowHtml = `
-        <tr class="hover:bg-white/40 border-b border-emerald-100/40 transition">
-          ${cellsHtml}
-          <td class="px-6 py-4 text-sm text-right whitespace-nowrap">
-            <div class="flex items-center justify-end gap-2">
+        <tr id="studentRow_${student.rowNumber}" onclick="toggleStudentAccordion(${student.rowNumber})" class="hover:bg-emerald-50/40 border-b border-emerald-100/40 transition cursor-pointer select-none">
+          <td class="px-2.5 py-2 text-xs font-medium text-emerald-950">${displayName}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${displayDis}</td>
+          <td class="px-1.5 py-2 text-xs text-center font-medium text-gray-700">${ageText}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${student.classroom || '-'}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${svcText}</td>
+          <td class="px-2.5 py-2 text-xs text-gray-700">${student.teacher || '-'}</td>
+          <td class="px-2.5 py-2 text-xs text-center whitespace-nowrap">
+            <div class="flex items-center justify-center gap-1" onclick="event.stopPropagation()">
               ${actionButtons}
             </div>
+          </td>
+        </tr>
+        <tr id="studentSubRow_${student.rowNumber}" class="student-accordion-subrow hidden bg-emerald-50/20 border-b border-emerald-100/40">
+          <td colspan="7" class="p-2 sm:p-3">
+            ${cardHtml}
           </td>
         </tr>
       `;
@@ -1070,8 +1181,6 @@ const google = {
     });
 
     lucide.createIcons();
-    // Sync scrollbars after rendering
-    setTimeout(syncScrollbarWidths, 100);
   }
 
   // Thai Date formatting helper
@@ -2031,7 +2140,8 @@ const google = {
   }
 
   // Drill-down Student Details from Chart Click
-  function showDrillDownDetails(type, label) {
+  function showDrillDownDetails(type, label, showToast = true) {
+    state.currentDrillDownType = type;
     let filtered = [];
     let groupTitle = '';
 
@@ -2129,10 +2239,10 @@ const google = {
         const ageText = s.age || (age !== null ? `${age} ปี` : 'ไม่ระบุ');
 
         tbody.append(`
-          <tr class="hover:bg-emerald-50/20 border-b border-emerald-100/20">
-            <td class="px-4 py-2 font-medium text-gray-800 sticky-col">${s.name}</td>
+          <tr class="hover:bg-emerald-50/20 border-b border-emerald-100/20 transition">
+            <td class="px-4 py-2 font-medium text-emerald-950">${s.name}</td>
             <td class="px-4 py-2">${displayDis}</td>
-            <td class="px-4 py-2 text-center">${ageText}</td>
+            <td class="px-4 py-2 text-center font-medium">${ageText}</td>
             <td class="px-4 py-2">${s.classroom}</td>
             <td class="px-4 py-2">${svcText}</td>
             <td class="px-4 py-2">${s.teacher}</td>
@@ -2146,18 +2256,20 @@ const google = {
     
     lucide.createIcons();
 
-    // Show toast notification in bottom-right corner instead of scrolling
-    Swal.fire({
-      toast: true,
-      position: 'bottom-end',
-      icon: 'info',
-      title: 'แสดงรายละเอียดด้านล่าง',
-      showConfirmButton: false,
-      timer: 2000,
-      background: '#0f172a',
-      color: '#ffffff',
-      iconColor: '#38bdf8'
-    });
+    // Show toast notification only when invoked from user click, avoiding spam on live keystrokes
+    if (showToast) {
+      Swal.fire({
+        toast: true,
+        position: 'bottom-end',
+        icon: 'info',
+        title: 'แสดงรายละเอียดด้านล่าง',
+        showConfirmButton: false,
+        timer: 2000,
+        background: '#0f172a',
+        color: '#ffffff',
+        iconColor: '#38bdf8'
+      });
+    }
   }
 
   // ----------------------------------------------------
@@ -2569,7 +2681,135 @@ const google = {
 
   // ========================================================
   // SET EXCEL IMPORTER & ADMIN PREVIEW (PHASE 1)
+  // LOCAL PERSISTENCE VIA INDEXEDDB (BROWSER-SPECIFIC STORAGE)
   // ========================================================
+
+  const SET_CACHE_DB_NAME = 'LPSEC_SET_Cache_DB';
+  const SET_CACHE_DB_VERSION = 1;
+  const SET_CACHE_STORE_NAME = 'uploaded_files';
+
+  function openSetCacheDB() {
+    return new Promise((resolve, reject) => {
+      if (typeof window === 'undefined' || !window.indexedDB) {
+        return reject(new Error('IndexedDB not supported'));
+      }
+      const req = window.indexedDB.open(SET_CACHE_DB_NAME, SET_CACHE_DB_VERSION);
+      req.onupgradeneeded = function(e) {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(SET_CACHE_STORE_NAME)) {
+          db.createObjectStore(SET_CACHE_STORE_NAME, { keyPath: 'reportType' });
+        }
+      };
+      req.onsuccess = function(e) {
+        resolve(e.target.result);
+      };
+      req.onerror = function(e) {
+        reject(e.target.error);
+      };
+    });
+  }
+
+  function saveSetFileToLocalDB(fileData) {
+    return openSetCacheDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction([SET_CACHE_STORE_NAME], 'readwrite');
+        const store = tx.objectStore(SET_CACHE_STORE_NAME);
+        store.put(fileData);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('saveSetFileToLocalDB warning:', err);
+    });
+  }
+
+  function loadAllSetFilesFromLocalDB() {
+    return openSetCacheDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction([SET_CACHE_STORE_NAME], 'readonly');
+        const store = tx.objectStore(SET_CACHE_STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('loadAllSetFilesFromLocalDB warning:', err);
+      return [];
+    });
+  }
+
+  function clearAllSetFilesFromLocalDB() {
+    return openSetCacheDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction([SET_CACHE_STORE_NAME], 'readwrite');
+        const store = tx.objectStore(SET_CACHE_STORE_NAME);
+        store.clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    }).catch(err => {
+      console.warn('clearAllSetFilesFromLocalDB warning:', err);
+    });
+  }
+
+  async function restoreSetFilesFromLocalDB(autoRun = false) {
+    try {
+      const cachedList = await loadAllSetFilesFromLocalDB();
+      if (!cachedList || cachedList.length === 0) return;
+
+      let hasGeneral = false;
+      cachedList.forEach(item => {
+        if (item.reportType === 'general') {
+          state.setImport.generalRows = item.rows || [];
+          state.setImport.generalHeaders = item.headers || [];
+          state.setImport.generalMapping = item.mapping || {};
+          hasGeneral = true;
+
+          $('#fileInfoGeneral').text(`${item.fileName || 'ไฟล์ Excel 1'} (${state.setImport.generalRows.length} รายการ, ${state.setImport.generalHeaders.length} คอลัมน์)`);
+          $('#badgeSetGeneral')
+            .removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700')
+            .addClass('bg-emerald-100 text-emerald-800')
+            .text(`✓ ${state.setImport.generalRows.length} แถว`);
+        } else if (item.reportType === 'address') {
+          state.setImport.addressRows = item.rows || [];
+          state.setImport.addressHeaders = item.headers || [];
+          state.setImport.addressMapping = item.mapping || {};
+
+          $('#fileInfoAddress').text(`${item.fileName || 'ไฟล์ Excel 2'} (${state.setImport.addressRows.length} รายการ, ${state.setImport.addressHeaders.length} คอลัมน์)`);
+          $('#badgeSetAddress')
+            .removeClass('bg-gray-100 text-gray-600 bg-red-100 text-red-700')
+            .addClass('bg-emerald-100 text-emerald-800')
+            .text(`✓ ${state.setImport.addressRows.length} แถว`);
+        } else if (item.reportType === 'link') {
+          state.setImport.linkRows = item.rows || [];
+          state.setImport.linkHeaders = item.headers || [];
+          state.setImport.linkMapping = item.mapping || {};
+
+          $('#fileInfoLink').text(`${item.fileName || 'ไฟล์ Excel 3'} (${state.setImport.linkRows.length} รายการ, ${state.setImport.linkHeaders.length} คอลัมน์)`);
+          $('#badgeSetLink')
+            .removeClass('bg-gray-100 text-gray-500')
+            .addClass('bg-emerald-100 text-emerald-800')
+            .text(`✓ ${state.setImport.linkRows.length} แถว`);
+        }
+      });
+
+      // Automatically join reports to make address and other enriched fields immediately available
+      tryAutoJoinSetReports();
+
+      if (hasGeneral && state.setImport.generalRows.length > 0) {
+        $('#btnRunSetPreview').prop('disabled', false);
+        $('#badgeLocalCacheStatus').removeClass('hidden');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+
+        // If requested to auto-run and data is ready, run comparison silently
+        if (autoRun && state.allStudents && state.allStudents.length > 0 && !state.setImport.diffResult) {
+          executeSetImportPreview(true); // true = silent/no scroll
+        }
+      }
+    } catch (err) {
+      console.warn('restoreSetFilesFromLocalDB error:', err);
+    }
+  }
 
   function initSetImportEvents() {
     // 1. Admin Sub-Navigation Tabs
@@ -2669,6 +2909,9 @@ const google = {
         $('#setDiffModal').addClass('hidden');
       }
     });
+
+    // Restore cached files from IndexedDB if available
+    restoreSetFilesFromLocalDB(false);
   }
 
   // Handle Reading & Validating Excel file client-side
@@ -2739,6 +2982,26 @@ const google = {
         });
         $('#btnRunSetPreview').prop('disabled', !isGeneralValid || state.setImport.generalRows.length === 0);
 
+        // Save file to IndexedDB for browser-specific persistence
+        saveSetFileToLocalDB({
+          reportType: reportType,
+          fileName: file.name,
+          fileSize: file.size,
+          rows: rows,
+          headers: headers,
+          mapping: validation.detected,
+          valid: validation.valid,
+          savedAt: new Date().toISOString()
+        }).then(() => {
+          tryAutoJoinSetReports();
+          $('#badgeLocalCacheStatus').removeClass('hidden');
+          if (typeof lucide !== 'undefined') lucide.createIcons();
+          // Re-render table if on students view so addresses appear immediately
+          if (state.currentSection === 'students') {
+            renderStudentTable();
+          }
+        });
+
       } catch (err) {
         Swal.fire('ข้อผิดพลาดในการอ่านไฟล์', err.message, 'error');
       }
@@ -2767,13 +3030,13 @@ const google = {
   }
 
   // Execute SET Data Preview
-  function executeSetImportPreview() {
+  function executeSetImportPreview(isSilent = false) {
     if (!state.setImport.generalRows || state.setImport.generalRows.length === 0) {
-      Swal.fire('แจ้งเตือน', 'กรุณาเลือกไฟล์รายงานข้อมูลนักเรียน (ไฟล์ที่ 1) ก่อนเริ่มประมวลผล', 'warning');
+      if (!isSilent) Swal.fire('แจ้งเตือน', 'กรุณาเลือกไฟล์รายงานข้อมูลนักเรียน (ไฟล์ที่ 1) ก่อนเริ่มประมวลผล', 'warning');
       return;
     }
 
-    showLoading(true);
+    if (!isSilent) showLoading(true);
 
     setTimeout(() => {
       try {
@@ -2812,18 +3075,23 @@ const google = {
         // 6. Show Results Container
         $('#setPreviewResultsContainer').removeClass('hidden');
 
-        showLoading(false);
-
-        // Scroll to results
-        $('html, body').animate({
-          scrollTop: $('#setPreviewResultsContainer').offset().top - 80
-        }, 500);
+        if (!isSilent) {
+          showLoading(false);
+          // Scroll to results
+          $('html, body').animate({
+            scrollTop: $('#setPreviewResultsContainer').offset().top - 80
+          }, 500);
+        }
 
       } catch (err) {
-        showLoading(false);
-        Swal.fire('เกิดข้อผิดพลาดในการประมวลผล', err.message, 'error');
+        if (!isSilent) {
+          showLoading(false);
+          Swal.fire('เกิดข้อผิดพลาดในการประมวลผล', err.message, 'error');
+        } else {
+          console.warn('executeSetImportPreview silent error:', err);
+        }
       }
-    }, 200);
+    }, isSilent ? 50 : 200);
   }
 
   // Update Summary Badges and Tab Counters
@@ -2932,23 +3200,34 @@ const google = {
       const setRec = item.set || {};
       const sheetRec = item.sheet || {};
 
-      const rawStudentId = setRec.studentId || '-';
+      const rawStudentId = setRec.studentId || sheetRec.studentId || '-';
       const studentId = SETImporter.escapeHtml(rawStudentId);
 
-      const rawCid = setRec.citizenId || '-';
-      const citizenIdDisplay = SETImporter.escapeHtml(state.setImport.maskPii ? SETImporter.maskCitizenId(rawCid) : rawCid);
+      const rawCid = setRec.citizenId || sheetRec.citizenId || '';
+      const citizenIdDisplay = rawCid ? SETImporter.escapeHtml(state.setImport.maskPii ? SETImporter.maskCitizenId(rawCid) : rawCid) : '-';
 
       const rawName = setRec.fullName || sheetRec.name || '-';
-      const name = SETImporter.escapeHtml(rawName);
+      let name = SETImporter.escapeHtml(rawName);
+
 
       const dob = setRec.dob || sheetRec.dateOfBirth || '-';
-      const age = setRec.age || sheetRec.age || '-';
-      const dobAge = SETImporter.escapeHtml(dob !== '-' ? `${dob} (${age})` : '-');
+      let age = setRec.age || sheetRec.age || '';
+      if (!age || age === '-') {
+        if (dob !== '-') {
+          const calc = calculateAge(dob, sheetRec);
+          if (calc !== null) age = `${calc} ปี`;
+        }
+      }
+      let dobAge = '-';
+      if (dob !== '-') {
+        dobAge = age ? `${dob} (${age})` : dob;
+      }
+      const dobAgeDisplay = SETImporter.escapeHtml(dobAge);
 
       const rawDisability = setRec.disabilityTypeSet || sheetRec.disabilityByCard || sheetRec.disabilityByScreening || '-';
       const disability = SETImporter.escapeHtml(rawDisability);
 
-      const rawAddress = setRec.address || '-';
+      const rawAddress = setRec.address || sheetRec.address || '-';
       const address = SETImporter.escapeHtml(rawAddress);
 
       const safeCategory = SETImporter.escapeHtml(item.category);
@@ -2978,7 +3257,7 @@ const google = {
           <td class="px-3 py-3 font-mono font-medium text-emerald-950">${studentId}</td>
           <td class="px-3 py-3 font-mono text-gray-600">${citizenIdDisplay}</td>
           <td class="px-3 py-3 font-semibold text-emerald-950">${name}</td>
-          <td class="px-3 py-3 text-gray-600">${dobAge}</td>
+          <td class="px-3 py-3 text-gray-600">${dobAgeDisplay}</td>
           <td class="px-3 py-3 text-gray-700">${disability}</td>
           <td class="px-3 py-3 text-gray-600 max-w-xs truncate" title="${address}">${address}</td>
           <td class="px-3 py-3 text-center whitespace-nowrap">
@@ -3021,7 +3300,11 @@ const google = {
     const sheetRec = item.sheet || item.conflictCandidate || {};
 
     const studentName = setRec.fullName || sheetRec.name || 'ไม่ระบุชื่อ';
-    $('#diffModalStudentName').text(`รายละเอียดเปรียบเทียบ: ${studentName}`);
+    let modalTitleText = `รายละเอียดเปรียบเทียบ: ${studentName}`;
+    if (category === 'sheets_only') {
+      modalTitleText += ' (มีเฉพาะใน sheet)';
+    }
+    $('#diffModalStudentName').text(modalTitleText);
 
     // Status Banner in modal
     const banner = $('#diffModalStatusBanner');
@@ -3079,17 +3362,29 @@ const google = {
       banner.after(confidenceHtml);
     }
 
-    // Compare fields - cleanly separating independent disability sources
+    // Compute age from date of birth if not directly provided
+    let calcSetAge = setRec.age || '-';
+    if ((!calcSetAge || calcSetAge === '-') && setRec.dob) {
+      const c = calculateAge(setRec.dob);
+      if (c !== null) calcSetAge = `${c} ปี`;
+    }
+    let calcSheetAge = sheetRec.age || '-';
+    if ((!calcSheetAge || calcSheetAge === '-') && sheetRec.dateOfBirth) {
+      const c = calculateAge(sheetRec.dateOfBirth, sheetRec);
+      if (c !== null) calcSheetAge = `${c} ปี`;
+    }
+
+    // Compare fields - cleanly separating independent disability sources and using '-' for missing data
     const fields = [
       {
         name: 'รหัสนักเรียน',
         setVal: setRec.studentId || '-',
-        sheetVal: sheetRec.rowNumber ? `(แถวชีตที่ ${sheetRec.rowNumber})` : '-'
+        sheetVal: sheetRec.studentId || (sheetRec.rowNumber ? `(แถวชีตที่ ${sheetRec.rowNumber})` : '-')
       },
       {
         name: 'เลขประจำตัวประชาชน',
         setVal: setRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(setRec.citizenId) : setRec.citizenId) : '-',
-        sheetVal: sheetRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(sheetRec.citizenId) : sheetRec.citizenId) : '(ไม่มีในฐานข้อมูลชีตเดิม)'
+        sheetVal: sheetRec.citizenId ? (state.setImport.maskPii ? SETImporter.maskCitizenId(sheetRec.citizenId) : sheetRec.citizenId) : '-'
       },
       {
         name: 'ชื่อ-นามสกุล',
@@ -3103,8 +3398,8 @@ const google = {
       },
       {
         name: 'อายุ',
-        setVal: setRec.age || '-',
-        sheetVal: sheetRec.age || '-'
+        setVal: calcSetAge,
+        sheetVal: calcSheetAge
       },
       {
         name: 'เพศ',
@@ -3114,30 +3409,30 @@ const google = {
       {
         name: 'ความพิการ (ระบบ SET)',
         setVal: setRec.disabilityTypeSet || '-',
-        sheetVal: sheetRec.disabilityTypeSet || '(ไม่มีในชีตเดิม)',
+        sheetVal: sheetRec.disabilityTypeSet || '-',
         isSeparateSource: !sheetRec.disabilityTypeSet
       },
       {
         name: 'ความพิการ (บัตรคนพิการ)',
-        setVal: '(SET ไม่ได้ระบุ)',
+        setVal: setRec.disabilityByCard || '-',
         sheetVal: sheetRec.disabilityByCard || '-',
         isSeparateSource: true
       },
       {
         name: 'ความพิการ (แบบคัดกรอง)',
-        setVal: '(SET ไม่ได้ระบุ)',
+        setVal: setRec.disabilityByScreening || '-',
         sheetVal: sheetRec.disabilityByScreening || '-',
         isSeparateSource: true
       },
       {
         name: 'ที่อยู่ตามทะเบียนบ้าน',
         setVal: setRec.address || '-',
-        sheetVal: sheetRec.address || '(ไม่มีในชีตเดิม)'
+        sheetVal: sheetRec.address || '-'
       },
       {
         name: 'ห้องเรียน/ครูผู้รับผิดชอบ',
-        setVal: '(SET ไม่ได้ระบุ)',
-        sheetVal: sheetRec.classroom ? `${sheetRec.classroom} / ${sheetRec.teacher}` : '-'
+        setVal: '-',
+        sheetVal: sheetRec.classroom ? `${sheetRec.classroom} / ${sheetRec.teacher || '-'}` : '-'
       }
     ];
 
@@ -3280,4 +3575,589 @@ const google = {
     $('#btnRunSetPreview').prop('disabled', true);
     $('#setPreviewResultsContainer').addClass('hidden');
     $('#setValidationAlertBox').addClass('hidden');
+
+    // Clear IndexedDB persistence
+    clearAllSetFilesFromLocalDB().then(() => {
+      $('#badgeLocalCacheStatus').addClass('hidden');
+      if (typeof Swal !== 'undefined' && Swal.fire) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'ล้างข้อมูลไฟล์ที่จำไว้ในเครื่องเรียบร้อยแล้ว',
+          showConfirmButton: false,
+          timer: 2000
+        });
+      }
+    });
   }
+
+  // Auto-join SET Reports helper to make address data immediately available across the app
+  function tryAutoJoinSetReports() {
+    try {
+      if (!state.setImport || typeof SETImporter === 'undefined') return;
+      if (state.setImport.generalRows && state.setImport.generalRows.length > 0 &&
+          state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+        const normalizedGen = state.setImport.generalRows.map(r => SETImporter.normalizeSetGeneralRow(r, state.setImport.generalMapping));
+        const normalizedAddr = state.setImport.addressRows.map(r => SETImporter.normalizeSetAddressRow(r, state.setImport.addressMapping));
+        const normalizedLink = (state.setImport.linkRows || []).map(r => SETImporter.normalizeSetLinkRow(r, state.setImport.linkMapping));
+        const joinResult = SETImporter.joinSetReports(normalizedGen, normalizedAddr, normalizedLink);
+        state.setImport.joinedRecords = joinResult.joined;
+      }
+    } catch (err) {
+      console.warn('tryAutoJoinSetReports warning:', err);
+    }
+  }
+
+  /**
+   * Find matching record from attached SET Excel files
+   * Matches by Student ID, Citizen ID, or Normalized Name (+ DOB)
+   */
+  function findMatchedSetRecord(student) {
+    if (!student || !state.setImport || typeof SETImporter === 'undefined') return null;
+
+    // Ensure auto-join has run if records exist
+    if ((!state.setImport.joinedRecords || state.setImport.joinedRecords.length === 0) &&
+        state.setImport.generalRows && state.setImport.generalRows.length > 0 &&
+        state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+      tryAutoJoinSetReports();
+    }
+
+    const records = state.setImport.joinedRecords || [];
+    if (records.length === 0) return null;
+
+    const sid = student.studentId ? SETImporter.cleanStudentId(student.studentId) : '';
+    const cid = student.citizenId ? SETImporter.cleanCitizenId(student.citizenId) : '';
+    const normName = student.name ? SETImporter.normalizeThaiName(student.name) : '';
+    let dob = '';
+    if (student.dateOfBirth && typeof SETImporter.parseDateBE === 'function') {
+      const parsed = SETImporter.parseDateBE(student.dateOfBirth);
+      dob = parsed ? parsed.formatted : '';
+    }
+
+    // 1. Match by Student ID
+    if (sid) {
+      const found = records.find(r => SETImporter.cleanStudentId(r.studentId) === sid);
+      if (found) return found;
+    }
+
+    // 2. Match by Citizen ID
+    if (cid) {
+      const found = records.find(r => SETImporter.cleanCitizenId(r.citizenId) === cid);
+      if (found) return found;
+    }
+
+    // 3. Match by Normalized Name + DOB
+    if (normName && dob) {
+      const found = records.find(r => r.normalizedName === normName && r.dob === dob);
+      if (found) return found;
+    }
+
+    // 4. Match by Normalized Name alone (if unique in records)
+    if (normName) {
+      const matches = records.filter(r => r.normalizedName === normName);
+      if (matches.length === 1) return matches[0];
+    }
+
+    return null;
+  }
+
+  /**
+   * Smart Address Resolver:
+   * Resolves address from Google Sheets student record,
+   * falling back to attached SET Excel files (File 2 / Address report)
+   * matched by Student ID, Citizen ID, or Normalized Name + DOB.
+   */
+  function resolveStudentAddress(student) {
+    try {
+      if (!student) return { address: '-', fromExcel: false };
+
+      // 1. If Google Sheets already has an address, use it
+      if (student.address && student.address.trim() !== '' && student.address.trim() !== '-') {
+        return { address: student.address.trim(), fromExcel: false };
+      }
+
+      // 2. Check if SET Import has data
+      if (!state.setImport || typeof SETImporter === 'undefined') return { address: '-', fromExcel: false };
+
+      // If joinedRecords not ready yet, try auto-joining now
+      if ((!state.setImport.joinedRecords || state.setImport.joinedRecords.length === 0) &&
+          state.setImport.generalRows && state.setImport.generalRows.length > 0 &&
+          state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+        tryAutoJoinSetReports();
+      }
+
+      const sid = student.studentId ? SETImporter.cleanStudentId(student.studentId) : '';
+      const cid = student.citizenId ? SETImporter.cleanCitizenId(student.citizenId) : '';
+      const normName = student.name ? SETImporter.normalizeThaiName(student.name) : '';
+      let dob = '';
+      if (student.dateOfBirth && typeof SETImporter.parseDateBE === 'function') {
+        const parsed = SETImporter.parseDateBE(student.dateOfBirth);
+        dob = parsed ? parsed.formatted : '';
+      }
+
+      // 2.1 Check joinedRecords if available
+      if (state.setImport.joinedRecords && state.setImport.joinedRecords.length > 0) {
+        // By studentId
+        if (sid) {
+          const found = state.setImport.joinedRecords.find(r => SETImporter.cleanStudentId(r.studentId) === sid && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+        // By citizenId
+        if (cid) {
+          const found = state.setImport.joinedRecords.find(r => SETImporter.cleanCitizenId(r.citizenId) === cid && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+        // By normName + dob
+        if (normName && dob) {
+          const found = state.setImport.joinedRecords.find(r => r.normalizedName === normName && r.dob === dob && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+        // By normName alone
+        if (normName) {
+          const found = state.setImport.joinedRecords.find(r => r.normalizedName === normName && r.address);
+          if (found && found.address) return { address: found.address, fromExcel: true };
+        }
+      }
+
+      // 2.2 Direct match on raw addressRows
+      if (state.setImport.addressRows && state.setImport.addressRows.length > 0) {
+        for (const rawAddr of state.setImport.addressRows) {
+          const addr = (typeof SETImporter.normalizeSetAddressRow === 'function')
+            ? SETImporter.normalizeSetAddressRow(rawAddr, state.setImport.addressMapping)
+            : null;
+          if (addr && addr.fullAddress) {
+            if (sid && SETImporter.cleanStudentId(addr.studentId) === sid) {
+              return { address: addr.fullAddress, fromExcel: true };
+            }
+            if (cid && SETImporter.cleanCitizenId(addr.citizenId) === cid) {
+              return { address: addr.fullAddress, fromExcel: true };
+            }
+            // If raw address row has student name
+            if (normName && rawAddr) {
+              const rawName = rawAddr['ชื่อ-สกุล'] || rawAddr['ชื่อ-นามสกุล'] || rawAddr['ชื่อ'] || '';
+              if (rawName && SETImporter.normalizeThaiName(rawName) === normName) {
+                return { address: addr.fullAddress, fromExcel: true };
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('resolveStudentAddress error:', err);
+    }
+
+    return { address: '-', fromExcel: false };
+  }
+
+  // ========================================================
+  // STUDENT EXPANDABLE ACCORDION ROW (ZERO-PII COMPLIANT)
+  // ========================================================
+  function buildStudentAccordionCardHtml(student) {
+    if (!student) return '';
+
+    // Find matched record from Excel SET if available
+    const setRec = (typeof findMatchedSetRecord === 'function') ? findMatchedSetRecord(student) : null;
+
+    // 1. Student ID: Prioritize Excel SET, fallback to Google Sheets
+    const rawStudentId = (setRec && setRec.studentId) ? setRec.studentId : student.studentId;
+    const studentId = rawStudentId || (student.rowNumber ? '(แถวที่ ' + student.rowNumber + ')' : '-');
+
+    // 2. Student Name: Prioritize Excel SET, fallback to Google Sheets
+    const displayName = (setRec && setRec.fullName) ? setRec.fullName : (student.name || '-');
+
+    // 3. Age: Prioritize Excel SET, fallback to Google Sheets
+    let ageStr = '-';
+    if (setRec && setRec.age) {
+      ageStr = setRec.age.includes('ปี') ? setRec.age : setRec.age + ' ปี';
+    } else {
+      const age = calculateAge(student.dateOfBirth, student);
+      ageStr = student.age || (age !== null ? age + ' ปี' : 'ไม่ระบุอายุ');
+    }
+
+    // 4. Date of Birth: Prioritize Excel SET, fallback to Google Sheets
+    let dobText = '-';
+    if (setRec && setRec.dob) {
+      dobText = toThaiBuddhistDateString(setRec.dob);
+    } else if (student.dateOfBirth) {
+      dobText = toThaiBuddhistDateString(student.dateOfBirth);
+    }
+
+    // 5. Address from Excel SET
+    const studentAddress = resolveStudentAddress(student);
+
+    // 6. Disability from SET
+    const disSetText = (setRec && setRec.disabilityTypeSet) ? setRec.disabilityTypeSet : '-';
+
+    // Service badge
+    let svcText = 'รับบริการในศูนย์ / อื่นๆ';
+    let svcClass = 'bg-emerald-100 text-emerald-800';
+    if (student.serviceUnit === 1) {
+      svcText = 'รับบริการที่หน่วยบริการ';
+      svcClass = 'bg-cyan-100 text-cyan-800';
+    } else if (student.serviceAdjustHome === 1) {
+      svcText = 'รับบริการที่บ้าน (ปรับบ้าน)';
+      svcClass = 'bg-teal-100 text-teal-800';
+    } else if (student.serviceInCenter === 1) {
+      svcText = 'รับบริการที่ศูนย์';
+      svcClass = 'bg-emerald-100 text-emerald-800';
+    }
+    const svcBadge = `<span class="inline-block px-2 py-0.5 rounded text-[11px] font-bold ${svcClass}">${svcText}</span>`;
+
+    // Disability types
+    const disCard = getNormalizedDisability(student.disabilityByCard, true);
+    const disCardText = disCard !== 'ยังไม่มีบัตรคนพิการ' ? disCard : 'ยังไม่มีบัตรประจำตัวคนพิการ';
+
+    const disScreen = getNormalizedDisability(student.disabilityByScreening, false);
+    const disScreenText = disScreen !== 'ไม่ระบุ' ? disScreen : '-';
+
+    // Document Checklist Badges
+    const docBadgesHtml = `
+      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasDisabilityCard === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+        <i data-lucide="${student.hasDisabilityCard === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
+        <span>บัตรคนพิการ</span>
+      </span>
+      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasDisabilityCert === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+        <i data-lucide="${student.hasDisabilityCert === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
+        <span>เอกสารรับรอง</span>
+      </span>
+      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasEducationScreening === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+        <i data-lucide="${student.hasEducationScreening === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
+        <span>แบบคัดกรอง</span>
+      </span>
+    `;
+
+    // Special status badges (non-Thai, disabled later)
+    const hasSpecialStatus = (student.nonThai === 1 || student.nonThai === '1') || (student.disabledLater === 1 || student.disabledLater === '1');
+    let specialBadgesHtml = '';
+    if (student.nonThai === 1 || student.nonThai === '1') {
+      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-rose-100 text-rose-800 rounded border border-rose-200">ไม่ใช่สัญชาติไทย</span>';
+    }
+    if (student.disabledLater === 1 || student.disabledLater === '1') {
+      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-800 rounded border border-amber-200">พิการภายหลัง</span>';
+    }
+
+    return `
+      <div class="p-3 sm:p-4 bg-gradient-to-br from-emerald-50/60 via-white to-teal-50/40 rounded-xl border border-emerald-200/70 shadow-sm text-left">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          <!-- Column 1: ข้อมูลทั่วไปและการศึกษา -->
+          <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-100/70">
+                <i data-lucide="user" class="w-3.5 h-3.5 text-emerald-700"></i>
+                <span class="font-bold text-xs text-emerald-950">ข้อมูลพื้นฐาน & การศึกษา</span>
+              </div>
+              <div class="space-y-1 text-xs text-slate-700 leading-relaxed">
+                <div><span class="text-slate-500">รหัสนักเรียน:</span> <strong class="text-emerald-900 font-mono">${studentId}</strong></div>
+                <div><span class="text-slate-500">ชื่อ-สกุล:</span> <strong class="text-slate-900">${displayName}</strong></div>
+                <div><span class="text-slate-500">อายุ:</span> <span class="font-medium text-slate-800">${ageStr}</span></div>
+                <div><span class="text-slate-500">วันเดือนปีเกิด:</span> <span class="text-slate-800">${dobText}</span></div>
+                <div><span class="text-slate-500">ห้องเรียน/หน่วยบริการ:</span> <span class="font-semibold text-emerald-850">${student.classroom || '-'}</span></div>
+                <div><span class="text-slate-500">ครูผู้รับผิดชอบ:</span> <span class="font-medium text-slate-800">${student.teacher || '-'}</span></div>
+                <div class="pt-1"><span class="text-slate-500 mr-1">ประเภทบริการ:</span> ${svcBadge}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 2: ความพิการและเอกสารสิทธิ์ -->
+          <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-100/70">
+                <i data-lucide="award" class="w-3.5 h-3.5 text-emerald-700"></i>
+                <span class="font-bold text-xs text-emerald-950">ความพิการ & เอกสารหลักฐาน</span>
+              </div>
+              <div class="space-y-2 text-xs text-slate-700">
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามทะเบียน SET):</div>
+                  <div class="font-semibold text-blue-900 bg-blue-50/70 px-2 py-1 rounded border border-blue-100/60">${disSetText}</div>
+                </div>
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามบัตรคนพิการ):</div>
+                  <div class="font-semibold text-emerald-900 bg-emerald-50/70 px-2 py-1 rounded border border-emerald-100/60">${disCardText}</div>
+                </div>
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามแบบคัดกรองฯ):</div>
+                  <div class="font-medium text-slate-800 bg-slate-50 px-2 py-1 rounded border border-slate-100">${disScreenText}</div>
+                </div>
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-1">เอกสารหลักฐานทางการศึกษา:</div>
+                  <div class="flex flex-wrap gap-1">
+                    ${docBadgesHtml}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 3: ที่อยู่และสถานะ -->
+          <div class="bg-white/90 backdrop-blur-xs p-3 rounded-lg border border-emerald-100 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center gap-1.5 mb-2 pb-1.5 border-b border-emerald-100/70">
+                <i data-lucide="home" class="w-3.5 h-3.5 text-emerald-700"></i>
+                <span class="font-bold text-xs text-emerald-950">${hasSpecialStatus ? 'ที่อยู่ & สถานะพิเศษ' : 'ข้อมูลที่อยู่'}</span>
+              </div>
+              <div class="space-y-2 text-xs text-slate-700">
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-0.5">ที่อยู่ตามทะเบียนบ้าน:</div>
+                  <div class="text-slate-800 bg-slate-50 p-2 rounded border border-slate-100 text-xs leading-relaxed max-h-24 overflow-y-auto">${studentAddress.address || '-'}</div>
+                </div>
+                ${hasSpecialStatus ? `
+                <div>
+                  <div class="text-[11px] text-slate-500 mb-1">สถานะพิเศษ:</div>
+                  <div class="flex flex-wrap gap-1">
+                    ${specialBadgesHtml}
+                  </div>
+                </div>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+    function clearFiltersExceptSearch() {
+    $('#filterClassroom').val('').trigger('change');
+    $('#filterTeacher').val('').trigger('change');
+    $('#filterDisabilityCard').val('').trigger('change');
+    $('#filterDisabilityScreen').val('').trigger('change');
+    $('#filterAgeRange').val('').trigger('change');
+    $('#filterAgeYear').val('').trigger('change');
+    $('#filterSvcCenter').prop('checked', false);
+    $('#filterSvcUnit').prop('checked', false);
+    $('#filterSvcHome').prop('checked', false);
+    $('#filterDocCard').prop('checked', false);
+    $('#filterDocCert').prop('checked', false);
+    $('#filterDocScreen').prop('checked', false);
+    $('#filterStatusNonThai').prop('checked', false);
+    $('#filterStatusLater').prop('checked', false);
+    applyFilters();
+  }
+
+  window.clearFiltersExceptSearch = clearFiltersExceptSearch;
+
+  function toggleStudentAccordion(rowNumber) {
+    const subRow = $(`#studentSubRow_${rowNumber}`);
+    const chevron = $(`#studentAccordionChevron_${rowNumber}`);
+    if (subRow.hasClass('hidden')) {
+      subRow.removeClass('hidden');
+      chevron.addClass('rotate-180');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    } else {
+      subRow.addClass('hidden');
+      chevron.removeClass('rotate-180');
+    }
+  }
+
+  function toggleDrillDownAccordion(rowNumber) {
+    const subRow = $(`#drillDownSubRow_${rowNumber}`);
+    const chevron = $(`#drillDownChevron_${rowNumber}`);
+    if (subRow.hasClass('hidden')) {
+      subRow.removeClass('hidden');
+      chevron.addClass('rotate-180');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    } else {
+      subRow.addClass('hidden');
+      chevron.removeClass('rotate-180');
+    }
+  }
+
+  function expandAllStudents(isDrillDown = false) {
+    if (isDrillDown) {
+      $('.drilldown-accordion-subrow').removeClass('hidden');
+      $('[id^="drillDownChevron_"]').addClass('rotate-180');
+    } else {
+      $('.student-accordion-subrow').removeClass('hidden');
+      $('[id^="studentAccordionChevron_"]').addClass('rotate-180');
+    }
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  function collapseAllStudents(isDrillDown = false) {
+    if (isDrillDown) {
+      $('.drilldown-accordion-subrow').addClass('hidden');
+      $('[id^="drillDownChevron_"]').removeClass('rotate-180');
+    } else {
+      $('.student-accordion-subrow').addClass('hidden');
+      $('[id^="studentAccordionChevron_"]').removeClass('rotate-180');
+    }
+  }
+
+  // ========================================================
+  // STUDENT PROFILE MODAL CONTROLLERS (ZERO-PII COMPLIANT)
+  // ========================================================
+  function openStudentProfileByRow(rowNumber, studentList = null) {
+    const list = studentList || (state.filteredStudents && state.filteredStudents.length > 0 ? state.filteredStudents : state.allStudents);
+    const index = list.findIndex(s => s.rowNumber === rowNumber);
+    if (index === -1) return;
+    
+    state.currentProfileStudents = list;
+    state.currentProfileIndex = index;
+    renderStudentProfileModal();
+    $('#studentProfileModal').removeClass('hidden');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  function renderStudentProfileModal() {
+    if (state.currentProfileIndex < 0 || !state.currentProfileStudents[state.currentProfileIndex]) return;
+    const s = state.currentProfileStudents[state.currentProfileIndex];
+    const total = state.currentProfileStudents.length;
+    const idx = state.currentProfileIndex;
+
+    // Avatar initial letter
+    let cleanName = (s.name || '').replace(/^(เด็กชาย|เด็กหญิง|นาย|นางสาว|ด\.ช\.|ด\.ญ\.)/, '').trim();
+    let initialLetter = cleanName.charAt(0) || (s.name ? s.name.charAt(0) : 'น');
+
+    // Find matched record from Excel SET if available
+    const setRec = (typeof findMatchedSetRecord === 'function') ? findMatchedSetRecord(s) : null;
+    const displayName = (setRec && setRec.fullName) ? setRec.fullName : (s.name || '-');
+    const rawStudentId = (setRec && setRec.studentId) ? setRec.studentId : s.studentId;
+    const sid = rawStudentId || (s.rowNumber ? '(แถวที่ ' + s.rowNumber + ')' : '-');
+
+    let ageStr = '-';
+    if (setRec && setRec.age) {
+      ageStr = setRec.age.includes('ปี') ? setRec.age : setRec.age + ' ปี';
+    } else {
+      const age = calculateAge(s.dateOfBirth, s);
+      ageStr = s.age || (age !== null ? age + ' ปี' : 'ไม่ระบุอายุ');
+    }
+
+    let dobText = '-';
+    if (setRec && setRec.dob) {
+      dobText = toThaiBuddhistDateString(setRec.dob);
+    } else if (s.dateOfBirth) {
+      dobText = toThaiBuddhistDateString(s.dateOfBirth);
+    }
+
+    $('#profileAvatar').text(initialLetter);
+    $('#profileStudentName').text(displayName);
+    $('#profileStudentIdBadge').text('รหัส ' + sid);
+
+    // Gender detection from name prefix
+    let gender = 'ไม่ระบุ';
+    if (displayName) {
+      if (displayName.startsWith('เด็กชาย') || displayName.startsWith('นาย') || displayName.startsWith('ด.ช.')) gender = 'เพศชาย';
+      else if (displayName.startsWith('เด็กหญิง') || displayName.startsWith('นางสาว') || displayName.startsWith('ด.ญ.')) gender = 'เพศหญิง';
+    }
+    
+    $('#profileGenderAge').text(gender + ' • อายุ ' + ageStr);
+
+    // Age range
+    const parsedAgeNum = parseInt(ageStr, 10);
+    let ageRange = 'ไม่ระบุช่วง';
+    if (!isNaN(parsedAgeNum)) {
+      if (parsedAgeNum < 3) ageRange = 'ช่วงอายุน้อยกว่า 3 ปี';
+      else if (parsedAgeNum <= 6) ageRange = 'ช่วงอายุ 3 - 6 ปี';
+      else ageRange = 'ช่วงอายุ 7 ปีขึ้นไป';
+    }
+    $('#profileAgeRange').text(ageRange);
+
+    // Service badge (Google Sheets ของศูนย์ฯ)
+    let svcText = 'รับบริการในศูนย์ / อื่นๆ';
+    let svcClass = 'bg-emerald-400 text-emerald-950';
+    if (s.serviceUnit === 1) {
+      svcText = 'รับบริการที่หน่วยบริการ';
+      svcClass = 'bg-cyan-400 text-cyan-950';
+    } else if (s.serviceAdjustHome === 1) {
+      svcText = 'รับบริการที่บ้าน (ปรับบ้าน)';
+      svcClass = 'bg-teal-400 text-teal-950';
+    } else if (s.serviceInCenter === 1) {
+      svcText = 'รับบริการที่ศูนย์';
+      svcClass = 'bg-emerald-400 text-emerald-950';
+    }
+    const badge = $('#profileServiceBadge');
+    badge.text(svcText);
+    badge.attr('class', 'px-3 py-1 rounded-full text-xs font-bold shadow-sm shrink-0 ' + svcClass);
+
+    // Education & Classroom (Google Sheets ของศูนย์ฯ)
+    $('#profileClassroom').text(s.classroom || '-');
+    $('#profileTeacher').text(s.teacher || '-');
+    $('#profileDob').text(dobText);
+    const sAddress = resolveStudentAddress(s);
+    $('#profileAddress').text(sAddress.address || '-');
+
+    // Disabilities: SET vs Card vs Screening
+    const disSetText = (setRec && setRec.disabilityTypeSet) ? setRec.disabilityTypeSet : '-';
+    $('#profileDisSet').text(disSetText);
+
+    const disCard = getNormalizedDisability(s.disabilityByCard, true);
+    $('#profileDisCard').text(disCard !== 'ยังไม่มีบัตรคนพิการ' ? disCard : 'ยังไม่มีบัตรคนพิการ');
+    
+    const disScreen = getNormalizedDisability(s.disabilityByScreening, false);
+    $('#profileDisScreen').text(disScreen !== 'ไม่ระบุ' ? disScreen : '-');
+
+    // Document Checklist indicators
+    setProfileDocIndicator('#profileDocCard', s.hasDisabilityCard === 1, 'มีบัตรคนพิการ', 'ยังไม่มีบัตร');
+    setProfileDocIndicator('#profileDocCert', s.hasDisabilityCert === 1, 'มีเอกสารรับรอง', 'ไม่มีเอกสาร');
+    setProfileDocIndicator('#profileDocScreen', s.hasEducationScreening === 1, 'มีแบบคัดกรอง', 'ไม่มีแบบคัดกรอง');
+
+    // Navigation index
+    $('#profileCurrentIndexBadge').text(`${idx + 1} / ${total}`);
+
+    // Disable prev/next at bounds
+    $('#btnProfilePrevStudent').prop('disabled', idx === 0).toggleClass('opacity-40 cursor-not-allowed', idx === 0);
+    $('#btnProfileNextStudent').prop('disabled', idx === total - 1).toggleClass('opacity-40 cursor-not-allowed', idx === total - 1);
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  function setProfileDocIndicator(selector, hasDoc, trueText, falseText) {
+    const el = $(selector);
+    if (hasDoc) {
+      el.attr('class', 'inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full');
+      el.html(`<i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600"></i><span>${trueText}</span>`);
+    } else {
+      el.attr('class', 'inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full');
+      el.html(`<i data-lucide="x-circle" class="w-3.5 h-3.5 text-slate-400"></i><span>${falseText}</span>`);
+    }
+  }
+
+  function closeStudentProfileModal() {
+    $('#studentProfileModal').addClass('hidden');
+  }
+
+  // Profile modal event listeners
+  $(document).ready(function() {
+    $('#btnExpandAllStudents').click(function() { expandAllStudents(false); });
+    $('#btnCollapseAllStudents').click(function() { collapseAllStudents(false); });
+    $('#btnCloseStudentProfileModal, #btnCloseStudentProfileModalBtn').click(closeStudentProfileModal);
+    
+    $('#studentProfileModal').click(function(e) {
+      if (e.target === this) closeStudentProfileModal();
+    });
+
+    $('#btnProfilePrevStudent').click(function() {
+      if (state.currentProfileIndex > 0) {
+        state.currentProfileIndex--;
+        renderStudentProfileModal();
+      }
+    });
+
+    $('#btnProfileNextStudent').click(function() {
+      if (state.currentProfileIndex < state.currentProfileStudents.length - 1) {
+        state.currentProfileIndex++;
+        renderStudentProfileModal();
+      }
+    });
+
+    $('#btnProfilePrint').click(function() {
+      window.print();
+    });
+
+    $(document).keydown(function(e) {
+      if (!$('#studentProfileModal').hasClass('hidden')) {
+        if (e.key === 'Escape') closeStudentProfileModal();
+        else if (e.key === 'ArrowLeft') $('#btnProfilePrevStudent').click();
+        else if (e.key === 'ArrowRight') $('#btnProfileNextStudent').click();
+      }
+    });
+  });
+
+  // Expose to window for inline onclick handlers
+  window.openStudentProfileByRow = openStudentProfileByRow;
+  window.closeStudentProfileModal = closeStudentProfileModal;
+  window.toggleStudentAccordion = toggleStudentAccordion;
+  window.toggleDrillDownAccordion = toggleDrillDownAccordion;
+  window.expandAllStudents = expandAllStudents;
+  window.collapseAllStudents = collapseAllStudents;
