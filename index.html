@@ -493,7 +493,6 @@
               </button>
             </div>
           </div>
-
         </div>
 
 
@@ -728,6 +727,119 @@
               <p class="text-xs text-gray-500">กดปุ่มขึ้น/ลงเพื่อจัดเรียงลำดับการแสดงผลคอลัมน์ในแฟ้มรายชื่อนักเรียน</p>
               <div id="adminColumnOrderContainer" class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
                 <!-- Dynamically populated column items with Up/Down buttons -->
+              </div>
+            </div>
+
+            <!-- Field Visibility Configuration (เฉพาะ Admin เท่านั้น) -->
+            <div class="flex flex-col gap-3 border-t border-emerald-100/30 pt-4">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <label class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <i data-lucide="sliders-horizontal" class="w-4 h-4 text-emerald-700"></i>
+                    <span>กำหนดการเปิด/ปิดแสดงผลหัวข้อข้อมูลนักเรียน (Field Visibility)</span>
+                    <span class="text-[11px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-medium">เฉพาะ Admin</span>
+                  </label>
+                  <p class="text-xs text-gray-500 mt-0.5">เลือกหัวข้อที่ต้องการให้แสดงผลในการ์ดรายละเอียดนักเรียนสำหรับผู้ใช้งานทั่วไป (ข้อมูลที่ไม่มีจะถูกซ่อนอัตโนมัติ)</p>
+                </div>
+                <div class="flex items-center gap-2 self-start sm:self-auto">
+                  <button type="button" id="btnAdminResetFieldVisibility" class="px-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white hover:bg-rose-50 hover:text-rose-700 text-slate-600 transition flex items-center gap-1 shadow-xs" title="คืนค่าเริ่มต้น">
+                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                    <span>คืนค่าเริ่มต้น</span>
+                  </button>
+                  <button type="button" id="btnAdminSaveFieldVisibility" class="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold shadow-xs transition flex items-center gap-1.5">
+                    <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                    <span>บันทึกการแสดงผล</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3.5 mt-1 text-xs">
+                <!-- Group 1: ข้อมูลพื้นฐาน & การศึกษา -->
+                <div class="border border-emerald-200/60 rounded-xl p-3.5 bg-white/70 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div class="font-bold text-emerald-950 mb-2.5 flex items-center gap-1.5 border-b border-emerald-100 pb-1.5">
+                      <i data-lucide="user" class="w-3.5 h-3.5 text-emerald-700"></i>
+                      <span>ข้อมูลพื้นฐาน & การศึกษา</span>
+                    </div>
+                    <div class="space-y-2 text-slate-700">
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_studentId" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>รหัสนักเรียน</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_age" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>อายุ</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_dob" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>วันเดือนปีเกิด</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_classroom" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>ห้องเรียน/หน่วยบริการ</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_teacher" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>ครูผู้รับผิดชอบ</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_serviceType" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>ประเภทบริการ</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Group 2: ความพิการ & เอกสารหลักฐาน -->
+                <div class="border border-emerald-200/60 rounded-xl p-3.5 bg-white/70 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div class="font-bold text-emerald-950 mb-2.5 flex items-center gap-1.5 border-b border-emerald-100 pb-1.5">
+                      <i data-lucide="award" class="w-3.5 h-3.5 text-emerald-700"></i>
+                      <span>ความพิการ & เอกสารหลักฐาน</span>
+                    </div>
+                    <div class="space-y-2 text-slate-700">
+                      <div class="p-2 rounded-lg bg-blue-50/70 border border-blue-200/60">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" id="admin_vis_disabilitySet" class="rounded text-blue-600 focus:ring-blue-500">
+                          <span class="font-semibold text-blue-950">ความพิการ (ตามทะเบียน SET)</span>
+                        </label>
+                        <p class="text-[10px] text-blue-700 mt-1 pl-6">ค่าเริ่มต้น: ปิดไว้ก่อน (เปิดเฉพาะเมื่อ Admin ต้องการ)</p>
+                      </div>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_disabilityCard" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>ความพิการ (ตามบัตรคนพิการ)</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_disabilityScreening" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>ความพิการ (ตามแบบคัดกรองฯ)</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_educationDocs" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>เอกสารหลักฐานทางการศึกษา</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Group 3: ข้อมูลที่อยู่ & สถานะพิเศษ -->
+                <div class="border border-emerald-200/60 rounded-xl p-3.5 bg-white/70 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div class="font-bold text-emerald-950 mb-2.5 flex items-center gap-1.5 border-b border-emerald-100 pb-1.5">
+                      <i data-lucide="home" class="w-3.5 h-3.5 text-emerald-700"></i>
+                      <span>ที่อยู่ & สถานะพิเศษ</span>
+                    </div>
+                    <div class="space-y-2 text-slate-700">
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_address" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>ที่อยู่ตามทะเบียนบ้าน</span>
+                      </label>
+                      <label class="flex items-center gap-2 cursor-pointer hover:text-emerald-800">
+                        <input type="checkbox" id="admin_vis_specialStatus" class="rounded text-emerald-600 focus:ring-emerald-500">
+                        <span>สถานะพิเศษ (ไม่ใช่สัญชาติไทย / พิการภายหลัง)</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

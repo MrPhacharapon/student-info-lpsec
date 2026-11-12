@@ -114,8 +114,49 @@ const google = {
   }
 };
 
+// Default Field Visibility for Student Detail Accordion
+const DEFAULT_FIELD_VISIBILITY = {
+  studentId: true,
+  age: true,
+  dob: true,
+  classroom: true,
+  teacher: true,
+  serviceType: true,
+  disabilitySet: false, // ปิดไว้ก่อนเป็นค่าเริ่มต้นตามที่ผู้ใช้กำหนด
+  disabilityCard: true,
+  disabilityScreening: true,
+  educationDocs: true,
+  address: true,
+  specialStatus: true
+};
+
+function getFieldVisibility() {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('LPSEC_FIELD_VISIBILITY');
+      if (saved) {
+        return Object.assign({}, DEFAULT_FIELD_VISIBILITY, JSON.parse(saved));
+      }
+    }
+  } catch (e) {
+    console.warn('Error reading field visibility:', e);
+  }
+  return Object.assign({}, DEFAULT_FIELD_VISIBILITY);
+}
+
+function saveFieldVisibility(vis) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('LPSEC_FIELD_VISIBILITY', JSON.stringify(vis));
+    }
+  } catch (e) {
+    console.warn('Error saving field visibility:', e);
+  }
+}
+
 // App Global State
   const state = {
+    fieldVisibility: getFieldVisibility(),
     adminToken: (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('ADMIN_SESSION_TOKEN') : null),
     allStudents: [],
     currentProfileStudents: [],
@@ -481,6 +522,62 @@ const google = {
       }
     });
 
+    // Helper function to extract and save field visibility from Admin inputs
+    function saveAdminFieldVisibilityFromInputs(showToast = true) {
+      state.fieldVisibility = {
+        studentId: $('#admin_vis_studentId').is(':checked'),
+        age: $('#admin_vis_age').is(':checked'),
+        dob: $('#admin_vis_dob').is(':checked'),
+        classroom: $('#admin_vis_classroom').is(':checked'),
+        teacher: $('#admin_vis_teacher').is(':checked'),
+        serviceType: $('#admin_vis_serviceType').is(':checked'),
+        disabilitySet: $('#admin_vis_disabilitySet').is(':checked'),
+        disabilityCard: $('#admin_vis_disabilityCard').is(':checked'),
+        disabilityScreening: $('#admin_vis_disabilityScreening').is(':checked'),
+        educationDocs: $('#admin_vis_educationDocs').is(':checked'),
+        address: $('#admin_vis_address').is(':checked'),
+        specialStatus: $('#admin_vis_specialStatus').is(':checked')
+      };
+      saveFieldVisibility(state.fieldVisibility);
+      renderStudentTable();
+      if (showToast && typeof Swal !== 'undefined') {
+        Swal.fire({
+          icon: 'success',
+          title: 'บันทึกการแสดงผลสำเร็จ',
+          text: 'บันทึกการตั้งค่าเปิด/ปิดหัวข้อข้อมูลนักเรียนเรียบร้อยแล้ว',
+          timer: 1500,
+          showConfirmButton: false
+        });
+      }
+    }
+
+    // Admin Save Field Visibility Button (เฉพาะการแสดงผลหัวข้อ - บันทึกทันทีไม่ต้องผ่าน Cloud)
+    $('#btnAdminSaveFieldVisibility').click(function() {
+      saveAdminFieldVisibilityFromInputs(true);
+    });
+
+    // Auto-save whenever any visibility checkbox changes in Admin panel
+    $(document).on('change', '#adminTabPanelGeneral input[id^="admin_vis_"]', function() {
+      saveAdminFieldVisibilityFromInputs(false);
+    });
+
+    // Admin Reset Field Visibility Button (เฉพาะในแผง Admin)
+    $('#btnAdminResetFieldVisibility').click(function() {
+      state.fieldVisibility = Object.assign({}, DEFAULT_FIELD_VISIBILITY);
+      saveFieldVisibility(state.fieldVisibility);
+      initAdminSettingsPanel();
+      renderStudentTable();
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          icon: 'success',
+          title: 'คืนค่าเริ่มต้นสำเร็จ',
+          text: 'รีเซ็ตการแสดงผลหัวข้อข้อมูลนักเรียนเป็นค่าเริ่มต้นเรียบร้อยแล้ว',
+          timer: 1500,
+          showConfirmButton: false
+        });
+      }
+    });
+
     // Toggle Advanced Search filter panel
     $('#btnToggleAdvancedSearch').click(function() {
       const panel = $('#filterPanel');
@@ -622,6 +719,25 @@ const google = {
       const reportDateStr = `${day}/${month}/${year}`;
       
       const colOrderStr = state.columnOrder.join(',');
+
+      // Save Field Visibility settings configured by Admin
+      state.fieldVisibility = {
+        studentId: $('#admin_vis_studentId').is(':checked'),
+        age: $('#admin_vis_age').is(':checked'),
+        dob: $('#admin_vis_dob').is(':checked'),
+        classroom: $('#admin_vis_classroom').is(':checked'),
+        teacher: $('#admin_vis_teacher').is(':checked'),
+        serviceType: $('#admin_vis_serviceType').is(':checked'),
+        disabilitySet: $('#admin_vis_disabilitySet').is(':checked'),
+        disabilityCard: $('#admin_vis_disabilityCard').is(':checked'),
+        disabilityScreening: $('#admin_vis_disabilityScreening').is(':checked'),
+        educationDocs: $('#admin_vis_educationDocs').is(':checked'),
+        address: $('#admin_vis_address').is(':checked'),
+        specialStatus: $('#admin_vis_specialStatus').is(':checked')
+      };
+      saveFieldVisibility(state.fieldVisibility);
+      renderStudentTable();
+
       showLoading(true);
       google.script.run
         .withSuccessHandler(function(res) {
@@ -643,7 +759,16 @@ const google = {
         })
         .withFailureHandler(function(err) {
           showLoading(false);
-          Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
+          if (err && err.message && err.message.includes('ENABLE_WRITES')) {
+            Swal.fire({
+              icon: 'info',
+              title: 'บันทึกการแสดงผลสำเร็จ',
+              html: 'บันทึกการตั้งค่าเปิด/ปิดหัวข้อข้อมูลนักเรียนบนหน้าเว็บเรียบร้อยแล้ว<br/><div class="mt-3 p-3 bg-amber-50 text-amber-900 rounded-xl text-xs text-left border border-amber-200 leading-relaxed"><strong>🔒 การป้องกันความปลอดภัย:</strong> ฐานข้อมูล Google Sheets ถูกล็อกไว้ในโหมดอ่านอย่างเดียว (Fail-Closed: Read-Only) เพื่อป้องกันข้อมูลจริง จึงไม่อนุญาตให้อัปเดตการตั้งค่าแผ่นงานบนคลาวด์ แต่การตั้งค่าแสดงผลบนหน้าเว็บถูกบันทึกและมีผลทันที</div>',
+              confirmButtonColor: '#2E7D32'
+            });
+          } else {
+            Swal.fire('ข้อผิดพลาด', 'ระบบหลังบ้านผิดพลาด: ' + err.message, 'error');
+          }
         })
         .saveAppConfig(spreadsheetId, sheetName, reportDateStr, colOrderStr);
     });
@@ -823,6 +948,23 @@ const google = {
     }
     // Render dynamic column order list
     initAdminColumnOrderList();
+
+    // Populate Field Visibility checkboxes in Admin Panel
+    const vis = state.fieldVisibility || DEFAULT_FIELD_VISIBILITY;
+    $('#admin_vis_studentId').prop('checked', vis.studentId !== false);
+    $('#admin_vis_age').prop('checked', vis.age !== false);
+    $('#admin_vis_dob').prop('checked', vis.dob !== false);
+    $('#admin_vis_classroom').prop('checked', vis.classroom !== false);
+    $('#admin_vis_teacher').prop('checked', vis.teacher !== false);
+    $('#admin_vis_serviceType').prop('checked', vis.serviceType !== false);
+    $('#admin_vis_disabilitySet').prop('checked', vis.disabilitySet === true);
+    $('#admin_vis_disabilityCard').prop('checked', vis.disabilityCard !== false);
+    $('#admin_vis_disabilityScreening').prop('checked', vis.disabilityScreening !== false);
+    $('#admin_vis_educationDocs').prop('checked', vis.educationDocs !== false);
+    $('#admin_vis_address').prop('checked', vis.address !== false);
+    $('#admin_vis_specialStatus').prop('checked', vis.specialStatus !== false);
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
   }
 
   const COLUMN_LABELS = {
@@ -1144,7 +1286,7 @@ const google = {
       const cardHtml = buildStudentAccordionCardHtml(student);
       const rowHtml = `
         <tr id="studentRow_${student.rowNumber}" onclick="toggleStudentAccordion(${student.rowNumber})" class="hover:bg-emerald-50/40 border-b border-emerald-100/40 transition cursor-pointer select-none">
-          <td class="px-2.5 py-2 text-xs font-medium text-emerald-950">${displayName}</td>
+          <td class="px-2.5 py-2 text-xs font-normal text-slate-800">${displayName}</td>
           <td class="px-2.5 py-2 text-xs text-gray-700">${displayDis}</td>
           <td class="px-1.5 py-2 text-xs text-center font-medium text-gray-700">${ageText}</td>
           <td class="px-2.5 py-2 text-xs text-gray-700">${student.classroom || '-'}</td>
@@ -3742,6 +3884,8 @@ const google = {
   function buildStudentAccordionCardHtml(student) {
     if (!student) return '';
 
+    const vis = (state && state.fieldVisibility) ? state.fieldVisibility : DEFAULT_FIELD_VISIBILITY;
+
     // Find matched record from Excel SET if available
     const setRec = (typeof findMatchedSetRecord === 'function') ? findMatchedSetRecord(student) : null;
 
@@ -3749,7 +3893,7 @@ const google = {
     const rawStudentId = (setRec && setRec.studentId) ? setRec.studentId : student.studentId;
     const studentId = rawStudentId || (student.rowNumber ? '(แถวที่ ' + student.rowNumber + ')' : '-');
 
-    // 2. Student Name: Prioritize Excel SET, fallback to Google Sheets
+    // 2. Student Name: Prioritize Excel SET, fallback to Google Sheets (NORMAL WEIGHT - NO BOLD)
     const displayName = (setRec && setRec.fullName) ? setRec.fullName : (student.name || '-');
 
     // 3. Age: Prioritize Excel SET, fallback to Google Sheets
@@ -3771,9 +3915,11 @@ const google = {
 
     // 5. Address from Excel SET
     const studentAddress = resolveStudentAddress(student);
+    const hasAddress = Boolean(studentAddress.address && studentAddress.address !== '-');
 
     // 6. Disability from SET
     const disSetText = (setRec && setRec.disabilityTypeSet) ? setRec.disabilityTypeSet : '-';
+    const hasDisSet = Boolean(disSetText && disSetText !== '-');
 
     // Service badge
     let svcText = 'รับบริการในศูนย์ / อื่นๆ';
@@ -3788,26 +3934,28 @@ const google = {
       svcText = 'รับบริการที่ศูนย์';
       svcClass = 'bg-emerald-100 text-emerald-800';
     }
-    const svcBadge = `<span class="inline-block px-2 py-0.5 rounded text-[11px] font-bold ${svcClass}">${svcText}</span>`;
+    const svcBadge = `<span class="inline-block px-2 py-0.5 rounded text-[11px] font-normal ${svcClass}">${svcText}</span>`;
 
     // Disability types
     const disCard = getNormalizedDisability(student.disabilityByCard, true);
     const disCardText = disCard !== 'ยังไม่มีบัตรคนพิการ' ? disCard : 'ยังไม่มีบัตรประจำตัวคนพิการ';
+    const hasDisCard = Boolean(disCardText && disCardText !== '-');
 
     const disScreen = getNormalizedDisability(student.disabilityByScreening, false);
     const disScreenText = disScreen !== 'ไม่ระบุ' ? disScreen : '-';
+    const hasDisScreen = Boolean(disScreenText && disScreenText !== '-');
 
     // Document Checklist Badges
     const docBadgesHtml = `
-      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasDisabilityCard === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+      <span class="inline-flex items-center gap-1 text-[11px] font-normal px-2 py-0.5 rounded-full ${student.hasDisabilityCard === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
         <i data-lucide="${student.hasDisabilityCard === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
         <span>บัตรคนพิการ</span>
       </span>
-      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasDisabilityCert === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+      <span class="inline-flex items-center gap-1 text-[11px] font-normal px-2 py-0.5 rounded-full ${student.hasDisabilityCert === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
         <i data-lucide="${student.hasDisabilityCert === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
         <span>เอกสารรับรอง</span>
       </span>
-      <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${student.hasEducationScreening === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
+      <span class="inline-flex items-center gap-1 text-[11px] font-normal px-2 py-0.5 rounded-full ${student.hasEducationScreening === 1 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-400'}">
         <i data-lucide="${student.hasEducationScreening === 1 ? 'check-circle-2' : 'x-circle'}" class="w-3 h-3"></i>
         <span>แบบคัดกรอง</span>
       </span>
@@ -3817,10 +3965,103 @@ const google = {
     const hasSpecialStatus = (student.nonThai === 1 || student.nonThai === '1') || (student.disabledLater === 1 || student.disabledLater === '1');
     let specialBadgesHtml = '';
     if (student.nonThai === 1 || student.nonThai === '1') {
-      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-rose-100 text-rose-800 rounded border border-rose-200">ไม่ใช่สัญชาติไทย</span>';
+      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-normal bg-rose-100 text-rose-800 rounded border border-rose-200">ไม่ใช่สัญชาติไทย</span>';
     }
     if (student.disabledLater === 1 || student.disabledLater === '1') {
-      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-semibold bg-amber-100 text-amber-800 rounded border border-amber-200">พิการภายหลัง</span>';
+      specialBadgesHtml += '<span class="inline-block px-2 py-0.5 text-[11px] font-normal bg-amber-100 text-amber-800 rounded border border-amber-200">พิการภายหลัง</span>';
+    }
+
+    // Build Column 1 items (Auto-hide if empty or toggled off)
+    let col1Items = [];
+    if (vis.studentId !== false && rawStudentId && rawStudentId !== '-') {
+      col1Items.push(`<div><span class="text-slate-500">รหัสนักเรียน:</span> <span class="text-emerald-950 font-mono font-normal">${studentId}</span></div>`);
+    }
+    // Name is always shown with normal weight (no bold)
+    col1Items.push(`<div><span class="text-slate-500">ชื่อ-สกุล:</span> <span class="text-slate-800 font-normal">${displayName}</span></div>`);
+    if (vis.age !== false && ageStr && ageStr !== '-' && ageStr !== 'ไม่ระบุอายุ') {
+      col1Items.push(`<div><span class="text-slate-500">อายุ:</span> <span class="text-slate-800 font-normal">${ageStr}</span></div>`);
+    }
+    if (vis.dob !== false && dobText && dobText !== '-') {
+      col1Items.push(`<div><span class="text-slate-500">วันเดือนปีเกิด:</span> <span class="text-slate-800 font-normal">${dobText}</span></div>`);
+    }
+    if (vis.classroom !== false && student.classroom && student.classroom !== '-') {
+      col1Items.push(`<div><span class="text-slate-500">ห้องเรียน/หน่วยบริการ:</span> <span class="text-emerald-900 font-normal">${student.classroom}</span></div>`);
+    }
+    if (vis.teacher !== false && student.teacher && student.teacher !== '-') {
+      col1Items.push(`<div><span class="text-slate-500">ครูผู้รับผิดชอบ:</span> <span class="text-slate-800 font-normal">${student.teacher}</span></div>`);
+    }
+    if (vis.serviceType !== false) {
+      col1Items.push(`<div class="pt-1"><span class="text-slate-500 mr-1">ประเภทบริการ:</span> ${svcBadge}</div>`);
+    }
+
+    // Build Column 2 items (Auto-hide if empty or disabled by Admin; SET disability closed by default)
+    let col2Items = [];
+    if (vis.disabilitySet === true && hasDisSet) {
+      col2Items.push(`
+        <div>
+          <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามทะเบียน SET):</div>
+          <div class="font-normal text-blue-900 bg-blue-50/70 px-2 py-1 rounded border border-blue-100/60">${disSetText}</div>
+        </div>
+      `);
+    }
+
+    if (vis.disabilityCard !== false && hasDisCard) {
+      col2Items.push(`
+        <div>
+          <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามบัตรคนพิการ):</div>
+          <div class="font-normal text-emerald-900 bg-emerald-50/70 px-2 py-1 rounded border border-emerald-100/60">${disCardText}</div>
+        </div>
+      `);
+    }
+
+    if (vis.disabilityScreening !== false && hasDisScreen) {
+      col2Items.push(`
+        <div>
+          <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามแบบคัดกรองฯ):</div>
+          <div class="font-normal text-slate-800 bg-slate-50 px-2 py-1 rounded border border-slate-100">${disScreenText}</div>
+        </div>
+      `);
+    }
+
+    if (vis.educationDocs !== false) {
+      col2Items.push(`
+        <div>
+          <div class="text-[11px] text-slate-500 mb-1">เอกสารหลักฐานทางการศึกษา:</div>
+          <div class="flex flex-wrap gap-1">
+            ${docBadgesHtml}
+          </div>
+        </div>
+      `);
+    }
+
+    if (col2Items.length === 0) {
+      col2Items.push(`<div class="text-[11px] text-slate-400 italic py-2 text-center bg-slate-50/50 rounded border border-slate-100">ไม่มีข้อมูลความพิการที่เปิดแสดงผล</div>`);
+    }
+
+    // Build Column 3 items (Auto-hide if empty or toggled off)
+    let col3Items = [];
+    if (vis.address !== false && hasAddress) {
+      col3Items.push(`
+        <div>
+          <div class="text-[11px] text-slate-500 mb-0.5">ที่อยู่ตามทะเบียนบ้าน:</div>
+          <div class="text-slate-800 bg-slate-50 p-2 rounded border border-slate-100 text-xs leading-relaxed max-h-24 overflow-y-auto">${studentAddress.address}</div>
+        </div>
+      `);
+    }
+
+    if (vis.specialStatus !== false && hasSpecialStatus) {
+      col3Items.push(`
+        <div>
+          <div class="text-[11px] text-slate-500 mb-1">สถานะพิเศษ:</div>
+          <div class="flex flex-wrap gap-1">
+            ${specialBadgesHtml}
+          </div>
+        </div>
+      `);
+    }
+
+    if (col3Items.length === 0) {
+      col3Items.push(`<div class="text-[11px] text-slate-400 italic py-2 text-center bg-slate-50/50 rounded border border-slate-100">ไม่มีข้อมูลที่อยู่หรือสถานะพิเศษ</div>`);
     }
 
     return `
@@ -3834,13 +4075,7 @@ const google = {
                 <span class="font-bold text-xs text-emerald-950">ข้อมูลพื้นฐาน & การศึกษา</span>
               </div>
               <div class="space-y-1 text-xs text-slate-700 leading-relaxed">
-                <div><span class="text-slate-500">รหัสนักเรียน:</span> <strong class="text-emerald-900 font-mono">${studentId}</strong></div>
-                <div><span class="text-slate-500">ชื่อ-สกุล:</span> <strong class="text-slate-900">${displayName}</strong></div>
-                <div><span class="text-slate-500">อายุ:</span> <span class="font-medium text-slate-800">${ageStr}</span></div>
-                <div><span class="text-slate-500">วันเดือนปีเกิด:</span> <span class="text-slate-800">${dobText}</span></div>
-                <div><span class="text-slate-500">ห้องเรียน/หน่วยบริการ:</span> <span class="font-semibold text-emerald-850">${student.classroom || '-'}</span></div>
-                <div><span class="text-slate-500">ครูผู้รับผิดชอบ:</span> <span class="font-medium text-slate-800">${student.teacher || '-'}</span></div>
-                <div class="pt-1"><span class="text-slate-500 mr-1">ประเภทบริการ:</span> ${svcBadge}</div>
+                ${col1Items.join('')}
               </div>
             </div>
           </div>
@@ -3853,24 +4088,7 @@ const google = {
                 <span class="font-bold text-xs text-emerald-950">ความพิการ & เอกสารหลักฐาน</span>
               </div>
               <div class="space-y-2 text-xs text-slate-700">
-                <div>
-                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามทะเบียน SET):</div>
-                  <div class="font-semibold text-blue-900 bg-blue-50/70 px-2 py-1 rounded border border-blue-100/60">${disSetText}</div>
-                </div>
-                <div>
-                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามบัตรคนพิการ):</div>
-                  <div class="font-semibold text-emerald-900 bg-emerald-50/70 px-2 py-1 rounded border border-emerald-100/60">${disCardText}</div>
-                </div>
-                <div>
-                  <div class="text-[11px] text-slate-500 mb-0.5">ประเภทความพิการ (ตามแบบคัดกรองฯ):</div>
-                  <div class="font-medium text-slate-800 bg-slate-50 px-2 py-1 rounded border border-slate-100">${disScreenText}</div>
-                </div>
-                <div>
-                  <div class="text-[11px] text-slate-500 mb-1">เอกสารหลักฐานทางการศึกษา:</div>
-                  <div class="flex flex-wrap gap-1">
-                    ${docBadgesHtml}
-                  </div>
-                </div>
+                ${col2Items.join('')}
               </div>
             </div>
           </div>
@@ -3883,18 +4101,7 @@ const google = {
                 <span class="font-bold text-xs text-emerald-950">${hasSpecialStatus ? 'ที่อยู่ & สถานะพิเศษ' : 'ข้อมูลที่อยู่'}</span>
               </div>
               <div class="space-y-2 text-xs text-slate-700">
-                <div>
-                  <div class="text-[11px] text-slate-500 mb-0.5">ที่อยู่ตามทะเบียนบ้าน:</div>
-                  <div class="text-slate-800 bg-slate-50 p-2 rounded border border-slate-100 text-xs leading-relaxed max-h-24 overflow-y-auto">${studentAddress.address || '-'}</div>
-                </div>
-                ${hasSpecialStatus ? `
-                <div>
-                  <div class="text-[11px] text-slate-500 mb-1">สถานะพิเศษ:</div>
-                  <div class="flex flex-wrap gap-1">
-                    ${specialBadgesHtml}
-                  </div>
-                </div>
-                ` : ''}
+                ${col3Items.join('')}
               </div>
             </div>
           </div>
@@ -3902,7 +4109,6 @@ const google = {
       </div>
     `;
   }
-
     function clearFiltersExceptSearch() {
     $('#filterClassroom').val('').trigger('change');
     $('#filterTeacher').val('').trigger('change');
