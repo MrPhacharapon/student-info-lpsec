@@ -91,3 +91,25 @@
 - **ช่องทางอ่าน (Excessive Data Exposure):** 
   - ทดสอบเรียกดูข้อมูลแบบ Anonymous GET ➔ ผลลัพธ์: API ส่งข้อมูลนักเรียนทั้ง 249 รายการพร้อมฟิลด์ละเอียดอ่อน (`disabilityByCard`, `disabilityByScreening`, `dateOfBirth`, `disabledLater`, `nonThai`) ออกมาใน JSON
   - **สรุป:** ยืนยันตรงตามที่ ChatGPT เตือน ข้อมูลถูกส่งออกมาใน Network Level แม้ Frontend จะมีปุ่มซ่อนก็ตาม จึงต้องดำเนินการควบคุมการเปิดเผยข้อมูลที่ Backend API ในลำดับถัดไป
+
+
+---
+
+## ๖. สรุปผลการปฏิบัติการ Batch 1: Security Containment & Cache Hardening
+- **มติและคำสั่งจากผู้ใช้ (Product Owner Directive):** 
+  - **Batch 3 (Staff SSO):** ชะลอไว้ก่อน ยังไม่ใช้งาน โดยคงระบบรหัสผ่านเดิมไว้
+  - **Batch 1 & 2:** อนุมัติให้ดำเนินการปรับปรุงระบบความปลอดภัยและการจัดการแคชทันที
+- **ผลการพัฒนา (Implemented Changes on branch `feature/security-containment-pdpa`):**
+  1. **Edge Gateway & Mutation Firewall (`api/students.js`):**
+     - กำหนด Action Whitelist: รับเฉพาะคำขอที่อนุญาต (GET: `getStudentDataAndConfig`, `getTabs` / POST: `verifyAdminPassword`, `adminLogout`, `saveAppConfig`, `createStudent`, `updateStudent`, `deleteStudent`) ปฏิเสธคำขออื่นด้วย HTTP 400
+     - สกัดกั้นคำขอเขียนข้อมูลที่ไม่ยืนยันตัวตนด้วย HTTP 401 ที่ชั้น Vercel โดยไม่ส่งต่อภาระไปยัง Google Apps Script
+     - Public Allowlist: กรองข้อมูลตอบกลับสำหรับผู้ใช้ทั่วไป ไม่ส่งเลขบัตรประชาชน, ที่อยู่, เบอร์โทรศัพท์, ข้อมูลประเมินเชิงลึก และตัด `spreadsheetId` ออกจาก Config
+     - Masking วันเกิด: แสดงเฉพาะปี พ.ศ. พร้อมคำนวณอายุอัตโนมัติ ทำให้กราฟสถิติและตัวกรองทำงานได้ครบ 100%
+  2. **ป้องกัน Direct GAS Bypass (`config.js`):**
+     - ปิดบัง Direct Google Apps Script URL บน Production โดยบังคับเรียกผ่าน `/api/students` เท่านั้น
+  3. **การจัดการแคชในเบราว์เซอร์ (`app.js`):**
+     - กำหนด TTL 15 นาที ให้กับ `LPSEC_STUDENT_DATA_CACHE` ใน LocalStorage เพื่อป้องกันข้อมูลค้างเก่าถาวร
+     - ล้างไฟล์ SET Excel ออกจาก IndexedDB ทันทีเมื่อผู้ดูแลระบบกดออกจากระบบ (Logout)
+- **ผลการตรวจสอบ (Verification Evidence):**
+  - Unit Tests: 27/27 Suites PASS (`test_set_importer.js`)
+  - Batch 1 Containment Tests: 4/4 Suites PASS (`scratch/test_batch1_containment.js`)
