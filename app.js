@@ -276,6 +276,7 @@ const google = {
     
     // Apply filters and render
     applyFilters();
+    renderDashboard();
     
     showLoading(false);
   }
@@ -970,29 +971,13 @@ const google = {
       return true;
     });
 
-    // Update UI components
+    // Update UI components for students page
     renderStudentTable();
-    renderDashboard();
     renderPivotTable();
     
     // Update Stats badge
     $('#filteredCountBadge').text(state.filteredStudents.length);
     $('#totalCountBadge').text(state.allStudents.length);
-
-    // Multi-tier Live Filtering & Real-Time Search:
-    // Auto-display matching students in lifted #chartDrillDownContainer right below counter cards
-    const hasActiveFilter = Boolean(
-      searchVal || classroomVal || teacherVal || disCardVal || disScrVal || 
-      ageRangeVal || ageYearVal || svcInCenter || svcSvcUnit || svcHome || 
-      docCard || docCert || docScreen || statusNonThai || statusLater
-    );
-    if (hasActiveFilter) {
-      state.currentDrillDownType = 'total';
-      showDrillDownDetails('total', '', false);
-    } else if (state.currentDrillDownType === 'total') {
-      $('#chartDrillDownContainer').addClass('hidden');
-      state.currentDrillDownType = null;
-    }
   }
 
   const COLUMN_DEFINITIONS = {
@@ -1612,9 +1597,9 @@ const google = {
     return colors;
   }
 
-  // Render Dashboard Analytics & Charts
+  // Render Dashboard Analytics & Charts (Always shows entire school overview)
   function renderDashboard() {
-    const list = state.filteredStudents;
+    const list = state.allStudents || [];
     
     // 1. Calculations for Counters
     let countInCenter = 0;
@@ -2144,10 +2129,11 @@ const google = {
     state.currentDrillDownType = type;
     let filtered = [];
     let groupTitle = '';
+    const baseList = state.allStudents || [];
 
     if (type === 'service') {
       groupTitle = `ประเภทบริการ: ${label}`;
-      filtered = state.filteredStudents.filter(s => {
+      filtered = baseList.filter(s => {
         if (label === 'รับบริการที่ศูนย์' || label === 'ในศูนย์') return s.serviceInCenter === 1;
         if (label === 'รับบริการที่หน่วยบริการ' || label === 'หน่วยบริการ') return s.serviceUnit === 1;
         if (label === 'รับบริการที่บ้าน' || label === 'ปรับบ้าน') return s.serviceAdjustHome === 1;
@@ -2155,7 +2141,7 @@ const google = {
       });
     } else if (type === 'ageGroup') {
       groupTitle = `ช่วงอายุ: ${label}`;
-      filtered = state.filteredStudents.filter(s => {
+      filtered = baseList.filter(s => {
         const age = calculateAge(s.dateOfBirth, s);
         if (label === 'อายุน้อยกว่า 3 ปี') return age !== null && age < 3;
         if (label === 'อายุ 3 - 6 ปี') return age !== null && age >= 3 && age <= 6;
@@ -2165,46 +2151,46 @@ const google = {
       });
     } else if (type === 'disabilityCard') {
       groupTitle = `ความพิการ (ตามบัตรฯ): ${label}`;
-      filtered = state.filteredStudents.filter(s => {
+      filtered = baseList.filter(s => {
         const norm = getNormalizedDisability(s.disabilityByCard, true);
         return norm === label;
       });
     } else if (type === 'disabilityScreening') {
       groupTitle = `ความพิการ (ตามแบบคัดกรองฯ): ${label}`;
-      filtered = state.filteredStudents.filter(s => {
+      filtered = baseList.filter(s => {
         const norm = getNormalizedDisability(s.disabilityByScreening, false);
         return norm === label;
       });
     } else if (type === 'specificAge') {
       groupTitle = `อายุรายปี: ${label}`;
       const targetAgeStr = label.replace(' ปี', '');
-      filtered = state.filteredStudents.filter(s => {
+      filtered = baseList.filter(s => {
         const age = calculateAge(s.dateOfBirth, s);
         if (targetAgeStr === 'ไม่ระบุ') return age === null;
         return age === parseInt(targetAgeStr, 10);
       });
     } else if (type === 'total') {
-      groupTitle = 'นักเรียนทั้งหมด (ตามตัวกรอง)';
-      filtered = state.filteredStudents;
+      groupTitle = 'นักเรียนทั้งหมด';
+      filtered = baseList;
     } else if (type === 'hasCard') {
       groupTitle = 'ความสมบูรณ์ของเอกสาร: มีบัตรประจำตัวคนพิการ';
-      filtered = state.filteredStudents.filter(s => s.hasDisabilityCard === 1);
+      filtered = baseList.filter(s => s.hasDisabilityCard === 1);
     } else if (type === 'hasCert') {
       groupTitle = 'ความสมบูรณ์ของเอกสาร: มีเอกสารรับรองความพิการ';
-      filtered = state.filteredStudents.filter(s => s.hasDisabilityCert === 1);
+      filtered = baseList.filter(s => s.hasDisabilityCert === 1);
     } else if (type === 'hasScreen') {
       groupTitle = 'ความสมบูรณ์ของเอกสาร: มีแบบคัดกรองทางการศึกษา';
-      filtered = state.filteredStudents.filter(s => s.hasEducationScreening === 1);
+      filtered = baseList.filter(s => s.hasEducationScreening === 1);
     } else if (type === 'district') {
       groupTitle = `อำเภอ: ${label}`;
-      filtered = state.filteredStudents.filter(s => getDistrictFromClassroom(s.classroom) === label);
+      filtered = baseList.filter(s => getDistrictFromClassroom(s.classroom) === label);
     } else if (type === 'districtService') {
       const parts = label.split('|');
       const distName = parts[0];
       const svcType = parts[1];
       const svcLabel = svcType === 'unit' ? 'หน่วยบริการ' : 'ปรับบ้าน';
       groupTitle = `บริการนอกศูนย์: ${distName} (${svcLabel})`;
-      filtered = state.filteredStudents.filter(s => {
+      filtered = baseList.filter(s => {
         if (getDistrictFromClassroom(s.classroom) !== distName) return false;
         if (svcType === 'unit') return s.serviceUnit === 1;
         if (svcType === 'home') return s.serviceAdjustHome === 1;
@@ -2212,10 +2198,10 @@ const google = {
       });
     } else if (type === 'classroom') {
       groupTitle = `ห้องเรียน: ${label}`;
-      filtered = state.filteredStudents.filter(s => s.classroom === label);
+      filtered = baseList.filter(s => s.classroom === label);
     } else if (type === 'outsideCenter') {
       groupTitle = 'นักเรียนที่รับบริการนอกศูนย์ (ทั้งหมด)';
-      filtered = state.filteredStudents.filter(s => s.serviceUnit === 1 || s.serviceAdjustHome === 1);
+      filtered = baseList.filter(s => s.serviceUnit === 1 || s.serviceAdjustHome === 1);
     }
 
     const tbody = $('#drillDownTableBody').empty();
