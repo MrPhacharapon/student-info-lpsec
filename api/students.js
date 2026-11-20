@@ -72,7 +72,14 @@ module.exports = async function handler(req, res) {
     // 1. POST Request Handling (Firewall & Mutation Gate)
     // -------------------------------------------------------------------------
     if (req.method === 'POST') {
-      const body = req.body || {};
+      let body = req.body || {};
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch (e) {
+          body = {};
+        }
+      }
       const action = body.action;
 
       // 1.1 Action Whitelist Check
